@@ -1,0 +1,71 @@
+diff --git a/mmseg/apis/inference.py b/mmseg/apis/inference.py
+index 5bbe6663..f657ed76 100644
+--- a/mmseg/apis/inference.py
++++ b/mmseg/apis/inference.py
+@@ -9,7 +9,7 @@ from mmseg.datasets.pipelines import Compose
+ from mmseg.models import build_segmentor
+ 
+ 
+-def init_segmentor(config, checkpoint=None, device='cuda:0'):
++def init_segmentor(config, checkpoint=None, device='musa:0'):
+     """Initialize a segmentor from config file.
+ 
+     Args:
+@@ -17,7 +17,7 @@ def init_segmentor(config, checkpoint=None, device='cuda:0'):
+             object.
+         checkpoint (str, optional): Checkpoint path. If left as None, the model
+             will not load any weights.
+-        device (str, optional) CPU/CUDA device option. Default 'cuda:0'.
++        device (str, optional) CPU/MUSA device option. Default 'musa:0'.
+             Use 'cpu' for loading model on CPU.
+     Returns:
+         nn.Module: The constructed segmentor.
+@@ -91,7 +91,7 @@ def inference_segmentor(model, imgs):
+         img_data = test_pipeline(img_data)
+         data.append(img_data)
+     data = collate(data, samples_per_gpu=len(imgs))
+-    if next(model.parameters()).is_cuda:
++    if next(model.parameters()).is_musa:
+         # scatter to specified GPU
+         data = scatter(data, [device])[0]
+     else:
+diff --git a/mmseg/apis/train.py b/mmseg/apis/train.py
+index be8e422b..9d8808dc 100644
+--- a/mmseg/apis/train.py
++++ b/mmseg/apis/train.py
+@@ -18,7 +18,7 @@ from mmseg.utils import (build_ddp, build_dp, find_latest_checkpoint,
+                          get_root_logger)
+ 
+ 
+-def init_random_seed(seed=None, device='cuda'):
++def init_random_seed(seed=None, device='musa'):
+     """Initialize random seed.
+ 
+     If the seed is not set, the seed will be automatically randomized,
+@@ -26,7 +26,7 @@ def init_random_seed(seed=None, device='cuda'):
+     Args:
+         seed (int, Optional): The seed. Default to None.
+         device (str): The device where the seed will be put on.
+-            Default to 'cuda'.
++            Default to 'musa'.
+     Returns:
+         int: Seed to be used.
+     """
+@@ -62,7 +62,7 @@ def set_random_seed(seed, deterministic=False):
+     random.seed(seed)
+     np.random.seed(seed)
+     torch.manual_seed(seed)
+-    torch.cuda.manual_seed_all(seed)
++    torch.musa.manual_seed_all(seed)
+     if deterministic:
+         torch.backends.cudnn.deterministic = True
+         torch.backends.cudnn.benchmark = False
+@@ -112,7 +112,7 @@ def train_segmentor(model,
+             broadcast_buffers=False,
+             find_unused_parameters=find_unused_parameters)
+     else:
+-        if not torch.cuda.is_available():
++        if not torch.musa.is_available():
+             assert digit_version(mmcv.__version__) >= digit_version('1.4.4'), \
+                 'Please use MMCV >= 1.4.4 for CPU training!'
+         model = build_dp(model, cfg.device, device_ids=cfg.gpu_ids)

@@ -1,0 +1,1039 @@
+diff --git a/mmdet/apis/inference.py b/mmdet/apis/inference.py
+index f0858a7c..ac5475de 100644
+--- a/mmdet/apis/inference.py
++++ b/mmdet/apis/inference.py
+@@ -15,7 +15,7 @@ from mmdet.datasets.pipelines import Compose
+ from mmdet.models import build_detector
+ 
+ 
+-def init_detector(config, checkpoint=None, device='cuda:0', cfg_options=None):
++def init_detector(config, checkpoint=None, device='musa:0', cfg_options=None):
+     """Initialize a detector from config file.
+ 
+     Args:
+@@ -143,7 +143,7 @@ def inference_detector(model, imgs):
+     # just get the actual data from DataContainer
+     data['img_metas'] = [img_metas.data[0] for img_metas in data['img_metas']]
+     data['img'] = [img.data[0] for img in data['img']]
+-    if next(model.parameters()).is_cuda:
++    if next(model.parameters()).is_musa:
+         # scatter to specified GPU
+         data = scatter(data, [device])[0]
+     else:
+@@ -203,7 +203,7 @@ async def async_inference_detector(model, imgs):
+     # just get the actual data from DataContainer
+     data['img_metas'] = [img_metas.data[0] for img_metas in data['img_metas']]
+     data['img'] = [img.data[0] for img in data['img']]
+-    if next(model.parameters()).is_cuda:
++    if next(model.parameters()).is_musa:
+         # scatter to specified GPU
+         data = scatter(data, [device])[0]
+     else:
+diff --git a/mmdet/apis/test.py b/mmdet/apis/test.py
+index 973d3623..24c4d7bf 100644
+--- a/mmdet/apis/test.py
++++ b/mmdet/apis/test.py
+@@ -142,12 +142,12 @@ def collect_results_cpu(result_part, size, tmpdir=None):
+         dir_tensor = torch.full((MAX_LEN, ),
+                                 32,
+                                 dtype=torch.uint8,
+-                                device='cuda')
++                                device='musa')
+         if rank == 0:
+             mmcv.mkdir_or_exist('.dist_test')
+             tmpdir = tempfile.mkdtemp(dir='.dist_test')
+             tmpdir = torch.tensor(
+-                bytearray(tmpdir.encode()), dtype=torch.uint8, device='cuda')
++                bytearray(tmpdir.encode()), dtype=torch.uint8, device='musa')
+             dir_tensor[:len(tmpdir)] = tmpdir
+         dist.broadcast(dir_tensor, 0)
+         tmpdir = dir_tensor.cpu().numpy().tobytes().decode().rstrip()
+@@ -180,14 +180,14 @@ def collect_results_gpu(result_part, size):
+     rank, world_size = get_dist_info()
+     # dump result part to tensor with pickle
+     part_tensor = torch.tensor(
+-        bytearray(pickle.dumps(result_part)), dtype=torch.uint8, device='cuda')
++        bytearray(pickle.dumps(result_part)), dtype=torch.uint8, device='musa')
+     # gather all result part tensor shape
+-    shape_tensor = torch.tensor(part_tensor.shape, device='cuda')
++    shape_tensor = torch.tensor(part_tensor.shape, device='musa')
+     shape_list = [shape_tensor.clone() for _ in range(world_size)]
+     dist.all_gather(shape_list, shape_tensor)
+     # padding result part tensor to max length
+     shape_max = torch.tensor(shape_list).max()
+-    part_send = torch.zeros(shape_max, dtype=torch.uint8, device='cuda')
++    part_send = torch.zeros(shape_max, dtype=torch.uint8, device='musa')
+     part_send[:shape_tensor[0]] = part_tensor
+     part_recv_list = [
+         part_tensor.new_zeros(shape_max) for _ in range(world_size)
+diff --git a/mmdet/apis/train.py b/mmdet/apis/train.py
+index f51f862a..9e3da9ea 100644
+--- a/mmdet/apis/train.py
++++ b/mmdet/apis/train.py
+@@ -16,7 +16,7 @@ from mmdet.utils import (build_ddp, build_dp, compat_cfg,
+                          find_latest_checkpoint, get_root_logger)
+ 
+ 
+-def init_random_seed(seed=None, device='cuda'):
++def init_random_seed(seed=None, device='musa'):
+     """Initialize random seed.
+ 
+     If the seed is not set, the seed will be automatically randomized,
+@@ -25,7 +25,7 @@ def init_random_seed(seed=None, device='cuda'):
+     Args:
+         seed (int, Optional): The seed. Default to None.
+         device (str): The device where the seed will be put on.
+-            Default to 'cuda'.
++            Default to 'musa'.
+ 
+     Returns:
+         int: Seed to be used.
+@@ -62,7 +62,7 @@ def set_random_seed(seed, deterministic=False):
+     random.seed(seed)
+     np.random.seed(seed)
+     torch.manual_seed(seed)
+-    torch.cuda.manual_seed_all(seed)
++    torch.musa.manual_seed_all(seed)
+     if deterministic:
+         torch.backends.cudnn.deterministic = True
+         torch.backends.cudnn.benchmark = False
+diff --git a/mmdet/core/anchor/anchor_generator.py b/mmdet/core/anchor/anchor_generator.py
+index 20886fbd..e5d751cf 100644
+--- a/mmdet/core/anchor/anchor_generator.py
++++ b/mmdet/core/anchor/anchor_generator.py
+@@ -213,7 +213,7 @@ class AnchorGenerator:
+         else:
+             return yy, xx
+ 
+-    def grid_priors(self, featmap_sizes, dtype=torch.float32, device='cuda'):
++    def grid_priors(self, featmap_sizes, dtype=torch.float32, device='musa'):
+         """Generate grid anchors in multiple feature levels.
+ 
+         Args:
+@@ -242,7 +242,7 @@ class AnchorGenerator:
+                                  featmap_size,
+                                  level_idx,
+                                  dtype=torch.float32,
+-                                 device='cuda'):
++                                 device='musa'):
+         """Generate grid anchors of a single level.
+ 
+         Note:
+@@ -254,7 +254,7 @@ class AnchorGenerator:
+             dtype (obj:`torch.dtype`): Date type of points.Defaults to
+                 ``torch.float32``.
+             device (str, optional): The device the tensor will be put on.
+-                Defaults to 'cuda'.
++                Defaults to 'musa'.
+ 
+         Returns:
+             torch.Tensor: Anchors in the overall feature maps.
+@@ -285,7 +285,7 @@ class AnchorGenerator:
+                       featmap_size,
+                       level_idx,
+                       dtype=torch.float32,
+-                      device='cuda'):
++                      device='musa'):
+         """Generate sparse anchors according to the ``prior_idxs``.
+ 
+         Args:
+@@ -315,7 +315,7 @@ class AnchorGenerator:
+ 
+         return priors
+ 
+-    def grid_anchors(self, featmap_sizes, device='cuda'):
++    def grid_anchors(self, featmap_sizes, device='musa'):
+         """Generate grid anchors in multiple feature levels.
+ 
+         Args:
+@@ -348,7 +348,7 @@ class AnchorGenerator:
+                                   base_anchors,
+                                   featmap_size,
+                                   stride=(16, 16),
+-                                  device='cuda'):
++                                  device='musa'):
+         """Generate grid anchors of a single level.
+ 
+         Note:
+@@ -360,7 +360,7 @@ class AnchorGenerator:
+             stride (tuple[int], optional): Stride of the feature map in order
+                 (w, h). Defaults to (16, 16).
+             device (str, optional): Device the tensor will be put on.
+-                Defaults to 'cuda'.
++                Defaults to 'musa'.
+ 
+         Returns:
+             torch.Tensor: Anchors in the overall feature maps.
+@@ -389,7 +389,7 @@ class AnchorGenerator:
+         # then (0, 1), (0, 2), ...
+         return all_anchors
+ 
+-    def valid_flags(self, featmap_sizes, pad_shape, device='cuda'):
++    def valid_flags(self, featmap_sizes, pad_shape, device='musa'):
+         """Generate valid flags of anchors in multiple feature levels.
+ 
+         Args:
+@@ -420,7 +420,7 @@ class AnchorGenerator:
+                                  featmap_size,
+                                  valid_size,
+                                  num_base_anchors,
+-                                 device='cuda'):
++                                 device='musa'):
+         """Generate the valid flags of anchor in a single feature map.
+ 
+         Args:
+@@ -429,7 +429,7 @@ class AnchorGenerator:
+             valid_size (tuple[int]): The valid size of the feature maps.
+             num_base_anchors (int): The number of base anchors.
+             device (str, optional): Device where the flags will be put on.
+-                Defaults to 'cuda'.
++                Defaults to 'musa'.
+ 
+         Returns:
+             torch.Tensor: The valid flags of each anchor in a single level \
+@@ -803,7 +803,7 @@ class YOLOAnchorGenerator(AnchorGenerator):
+ 
+         return base_anchors
+ 
+-    def responsible_flags(self, featmap_sizes, gt_bboxes, device='cuda'):
++    def responsible_flags(self, featmap_sizes, gt_bboxes, device='musa'):
+         """Generate responsible anchor flags of grid cells in multiple scales.
+ 
+         Args:
+@@ -833,7 +833,7 @@ class YOLOAnchorGenerator(AnchorGenerator):
+                                        gt_bboxes,
+                                        stride,
+                                        num_base_anchors,
+-                                       device='cuda'):
++                                       device='musa'):
+         """Generate the responsible flags of anchor in a single feature map.
+ 
+         Args:
+@@ -842,7 +842,7 @@ class YOLOAnchorGenerator(AnchorGenerator):
+             stride (tuple(int)): stride of current level
+             num_base_anchors (int): The number of base anchors.
+             device (str, optional): Device where the flags will be put on.
+-                Defaults to 'cuda'.
++                Defaults to 'musa'.
+ 
+         Returns:
+             torch.Tensor: The valid flags of each anchor in a single level \
+diff --git a/mmdet/core/anchor/point_generator.py b/mmdet/core/anchor/point_generator.py
+index cc9c3887..397fee23 100644
+--- a/mmdet/core/anchor/point_generator.py
++++ b/mmdet/core/anchor/point_generator.py
+@@ -17,7 +17,7 @@ class PointGenerator:
+         else:
+             return yy, xx
+ 
+-    def grid_points(self, featmap_size, stride=16, device='cuda'):
++    def grid_points(self, featmap_size, stride=16, device='musa'):
+         feat_h, feat_w = featmap_size
+         shift_x = torch.arange(0., feat_w, device=device) * stride
+         shift_y = torch.arange(0., feat_h, device=device) * stride
+@@ -27,7 +27,7 @@ class PointGenerator:
+         all_points = shifts.to(device)
+         return all_points
+ 
+-    def valid_flags(self, featmap_size, valid_size, device='cuda'):
++    def valid_flags(self, featmap_size, valid_size, device='musa'):
+         feat_h, feat_w = featmap_size
+         valid_h, valid_w = valid_size
+         assert valid_h <= feat_h and valid_w <= feat_w
+@@ -80,7 +80,7 @@ class MlvlPointGenerator:
+     def grid_priors(self,
+                     featmap_sizes,
+                     dtype=torch.float32,
+-                    device='cuda',
++                    device='musa',
+                     with_stride=False):
+         """Generate grid points of multiple feature levels.
+ 
+@@ -120,7 +120,7 @@ class MlvlPointGenerator:
+                                  featmap_size,
+                                  level_idx,
+                                  dtype=torch.float32,
+-                                 device='cuda',
++                                 device='musa',
+                                  with_stride=False):
+         """Generate grid Points of a single level.
+ 
+@@ -133,7 +133,7 @@ class MlvlPointGenerator:
+             level_idx (int): The index of corresponding feature map level.
+             dtype (:obj:`dtype`): Dtype of priors. Default: torch.float32.
+             device (str, optional): The device the tensor will be put on.
+-                Defaults to 'cuda'.
++                Defaults to 'musa'.
+             with_stride (bool): Concatenate the stride to the last dimension
+                 of points.
+ 
+@@ -174,7 +174,7 @@ class MlvlPointGenerator:
+         all_points = shifts.to(device)
+         return all_points
+ 
+-    def valid_flags(self, featmap_sizes, pad_shape, device='cuda'):
++    def valid_flags(self, featmap_sizes, pad_shape, device='musa'):
+         """Generate valid flags of points of multiple feature levels.
+ 
+         Args:
+@@ -205,7 +205,7 @@ class MlvlPointGenerator:
+     def single_level_valid_flags(self,
+                                  featmap_size,
+                                  valid_size,
+-                                 device='cuda'):
++                                 device='musa'):
+         """Generate the valid flags of points of a single feature map.
+ 
+         Args:
+@@ -214,7 +214,7 @@ class MlvlPointGenerator:
+             valid_size (tuple[int]): The valid size of the feature maps.
+                 The size arrange as as (h, w).
+             device (str, optional): The device where the flags will be put on.
+-                Defaults to 'cuda'.
++                Defaults to 'musa'.
+ 
+         Returns:
+             torch.Tensor: The valid flags of each points in a single level \
+@@ -236,7 +236,7 @@ class MlvlPointGenerator:
+                       featmap_size,
+                       level_idx,
+                       dtype=torch.float32,
+-                      device='cuda'):
++                      device='musa'):
+         """Generate sparse points according to the ``prior_idxs``.
+ 
+         Args:
+diff --git a/mmdet/core/bbox/assigners/sim_ota_assigner.py b/mmdet/core/bbox/assigners/sim_ota_assigner.py
+index 58bfef43..029c16af 100644
+--- a/mmdet/core/bbox/assigners/sim_ota_assigner.py
++++ b/mmdet/core/bbox/assigners/sim_ota_assigner.py
+@@ -74,7 +74,7 @@ class SimOTAAssigner(BaseAssigner):
+                           'cost during label assignment. CPU mode is applied '
+                           'in this batch. If you want to avoid this issue, '
+                           'try to reduce the batch size or image size.')
+-            torch.cuda.empty_cache()
++            torch.musa.empty_cache()
+ 
+             pred_scores = pred_scores.cpu()
+             priors = priors.cpu()
+diff --git a/mmdet/core/bbox/assigners/uniform_assigner.py b/mmdet/core/bbox/assigners/uniform_assigner.py
+index 70294fc4..a6da3135 100644
+--- a/mmdet/core/bbox/assigners/uniform_assigner.py
++++ b/mmdet/core/bbox/assigners/uniform_assigner.py
+@@ -72,9 +72,9 @@ class UniformAssigner(BaseAssigner):
+             bbox_xyxy_to_cxcywh(anchor), bbox_xyxy_to_cxcywh(gt_bboxes), p=1)
+ 
+         # We found that topk function has different results in cpu and
+-        # cuda mode. In order to ensure consistency with the source code,
++        # musa mode. In order to ensure consistency with the source code,
+         # we also use cpu mode.
+-        # TODO: Check whether the performance of cpu and cuda are the same.
++        # TODO: Check whether the performance of cpu and musa are the same.
+         C = cost_bbox.cpu()
+         C1 = cost_bbox_anchors.cpu()
+ 
+diff --git a/mmdet/core/bbox/iou_calculators/iou2d_calculator.py b/mmdet/core/bbox/iou_calculators/iou2d_calculator.py
+index b71a5557..cbbe7061 100644
+--- a/mmdet/core/bbox/iou_calculators/iou2d_calculator.py
++++ b/mmdet/core/bbox/iou_calculators/iou2d_calculator.py
+@@ -12,7 +12,7 @@ def cast_tensor_type(x, scale=1., dtype=None):
+ 
+ 
+ def fp16_clamp(x, min=None, max=None):
+-    if not x.is_cuda and x.dtype == torch.float16:
++    if not x.is_musa and x.dtype == torch.float16:
+         # clamp for cpu float16, tensor fp16 has no clamp implementation
+         return x.float().clamp(min, max).half()
+ 
+@@ -53,11 +53,11 @@ class BboxOverlaps2D:
+             bboxes1 = bboxes1[..., :4]
+ 
+         if self.dtype == 'fp16':
+-            # change tensor type to save cpu and cuda memory and keep speed
++            # change tensor type to save cpu and musa memory and keep speed
+             bboxes1 = cast_tensor_type(bboxes1, self.scale, self.dtype)
+             bboxes2 = cast_tensor_type(bboxes2, self.scale, self.dtype)
+             overlaps = bbox_overlaps(bboxes1, bboxes2, mode, is_aligned)
+-            if not overlaps.is_cuda and overlaps.dtype == torch.float16:
++            if not overlaps.is_musa and overlaps.dtype == torch.float16:
+                 # resume cpu float32
+                 overlaps = overlaps.float()
+             return overlaps
+@@ -109,7 +109,7 @@ def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6):
+             When the batch size is B, reduce:
+                 B x R
+ 
+-            Therefore, CUDA memory runs out frequently.
++            Therefore, MUSA memory runs out frequently.
+ 
+             Experiments on GeForce RTX 2080Ti (11019 MiB):
+ 
+diff --git a/mmdet/core/bbox/samplers/random_sampler.py b/mmdet/core/bbox/samplers/random_sampler.py
+index 8d3effcb..ae12e592 100644
+--- a/mmdet/core/bbox/samplers/random_sampler.py
++++ b/mmdet/core/bbox/samplers/random_sampler.py
+@@ -47,8 +47,8 @@ class RandomSampler(BaseSampler):
+ 
+         is_tensor = isinstance(gallery, torch.Tensor)
+         if not is_tensor:
+-            if torch.cuda.is_available():
+-                device = torch.cuda.current_device()
++            if torch.musa.is_available():
++                device = torch.musa.current_device()
+             else:
+                 device = 'cpu'
+             gallery = torch.tensor(gallery, dtype=torch.long, device=device)
+diff --git a/mmdet/core/bbox/samplers/score_hlr_sampler.py b/mmdet/core/bbox/samplers/score_hlr_sampler.py
+index f4be9b8c..d2f419f8 100644
+--- a/mmdet/core/bbox/samplers/score_hlr_sampler.py
++++ b/mmdet/core/bbox/samplers/score_hlr_sampler.py
+@@ -78,8 +78,8 @@ class ScoreHLRSampler(BaseSampler):
+ 
+         is_tensor = isinstance(gallery, torch.Tensor)
+         if not is_tensor:
+-            if torch.cuda.is_available():
+-                device = torch.cuda.current_device()
++            if torch.musa.is_available():
++                device = torch.musa.current_device()
+             else:
+                 device = 'cpu'
+             gallery = torch.tensor(gallery, dtype=torch.long, device=device)
+diff --git a/mmdet/core/data_structures/general_data.py b/mmdet/core/data_structures/general_data.py
+index 978fdfd7..4da084d7 100644
+--- a/mmdet/core/data_structures/general_data.py
++++ b/mmdet/core/data_structures/general_data.py
+@@ -32,7 +32,7 @@ class GeneralData(NiceRepr):
+           `.` , `[]`, `in`, `del`, `pop(str)` `get(str)`, `keys()`,
+           `values()`, `items()`. Users can also apply tensor-like methods
+           to all obj:`torch.Tensor` in the `data_fileds`,
+-          such as `.cuda()`, `.cpu()`, `.numpy()`, `device`, `.to()`
++          such as `.musa()`, `.cpu()`, `.numpy()`, `device`, `.to()`
+           `.detach()`, `.numpy()`
+ 
+     Args:
+@@ -294,12 +294,12 @@ class GeneralData(NiceRepr):
+         return new_data
+ 
+     # Tensor-like methods
+-    def cuda(self):
++    def musa(self):
+         """Apply same name function to all tensors in data_fields."""
+         new_data = self.new()
+         for k, v in self.items():
+             if isinstance(v, torch.Tensor):
+-                v = v.cuda()
++                v = v.musa()
+             new_data[k] = v
+         return new_data
+ 
+diff --git a/mmdet/core/export/model_wrappers.py b/mmdet/core/export/model_wrappers.py
+index 2f62bb03..8f2815f5 100644
+--- a/mmdet/core/export/model_wrappers.py
++++ b/mmdet/core/export/model_wrappers.py
+@@ -115,9 +115,9 @@ class ONNXRuntimeDetector(DeployBaseDetector):
+         sess = ort.InferenceSession(onnx_file, session_options)
+         providers = ['CPUExecutionProvider']
+         options = [{}]
+-        is_cuda_available = ort.get_device() == 'GPU'
+-        if is_cuda_available:
+-            providers.insert(0, 'CUDAExecutionProvider')
++        is_musa_available = ort.get_device() == 'GPU'
++        if is_musa_available:
++            providers.insert(0, 'MUSAExecutionProvider')
+             options.insert(0, {'device_id': device_id})
+ 
+         sess.set_providers(providers, options)
+@@ -125,13 +125,13 @@ class ONNXRuntimeDetector(DeployBaseDetector):
+         self.sess = sess
+         self.io_binding = sess.io_binding()
+         self.output_names = [_.name for _ in sess.get_outputs()]
+-        self.is_cuda_available = is_cuda_available
++        self.is_musa_available = is_musa_available
+ 
+     def forward_test(self, imgs, img_metas, **kwargs):
+         input_data = imgs[0]
+         # set io binding for inputs/outputs
+-        device_type = 'cuda' if self.is_cuda_available else 'cpu'
+-        if not self.is_cuda_available:
++        device_type = 'musa' if self.is_musa_available else 'cpu'
++        if not self.is_musa_available:
+             input_data = input_data.cpu()
+         self.io_binding.bind_input(
+             name='input',
+@@ -176,7 +176,7 @@ class TensorRTDetector(DeployBaseDetector):
+ 
+     def forward_test(self, imgs, img_metas, **kwargs):
+         input_data = imgs[0].contiguous()
+-        with torch.cuda.device(self.device_id), torch.no_grad():
++        with torch.musa.device(self.device_id), torch.no_grad():
+             outputs = self.model({'input': input_data})
+             outputs = [outputs[name] for name in self.model.output_names]
+         outputs = [out.detach().cpu().numpy() for out in outputs]
+diff --git a/mmdet/core/hook/sync_random_size_hook.py b/mmdet/core/hook/sync_random_size_hook.py
+index 6d7e96c6..730dedd5 100644
+--- a/mmdet/core/hook/sync_random_size_hook.py
++++ b/mmdet/core/hook/sync_random_size_hook.py
+@@ -27,14 +27,14 @@ class SyncRandomSizeHook(Hook):
+         img_scale (tuple[int]): Size of input image. Default: (640, 640).
+         interval (int): The epoch interval of change image size. Default: 1.
+         device (torch.device | str): device for returned tensors.
+-            Default: 'cuda'.
++            Default: 'musa'.
+     """
+ 
+     def __init__(self,
+                  ratio_range=(14, 26),
+                  img_scale=(640, 640),
+                  interval=1,
+-                 device='cuda'):
++                 device='musa'):
+         warnings.warn('DeprecationWarning: SyncRandomSizeHook is deprecated. '
+                       'Please use Resize pipeline to achieve similar '
+                       'functions. Due to the multi-process dataloader, '
+diff --git a/mmdet/core/utils/dist_utils.py b/mmdet/core/utils/dist_utils.py
+index 8760774f..ff2a43c6 100644
+--- a/mmdet/core/utils/dist_utils.py
++++ b/mmdet/core/utils/dist_utils.py
+@@ -74,7 +74,7 @@ def reduce_mean(tensor):
+     return tensor
+ 
+ 
+-def obj2tensor(pyobj, device='cuda'):
++def obj2tensor(pyobj, device='musa'):
+     """Serialize picklable python object to tensor."""
+     storage = torch.ByteStorage.from_buffer(pickle.dumps(pyobj))
+     return torch.ByteTensor(storage).to(device=device)
+@@ -89,7 +89,7 @@ def tensor2obj(tensor):
+ def _get_global_gloo_group():
+     """Return a process group based on gloo backend, containing all the ranks
+     The result is cached."""
+-    if dist.get_backend() == 'nccl':
++    if dist.get_backend() == 'mccl':
+         return dist.new_group(backend='gloo')
+     else:
+         return dist.group.WORLD
+@@ -103,7 +103,7 @@ def all_reduce_dict(py_dict, op='sum', group=None, to_float=True):
+ 
+     NOTE: make sure that py_dict in different ranks has the same keys and
+     the values should be in the same shape. Currently only supports
+-    nccl backend.
++    mccl backend.
+ 
+     Args:
+         py_dict (dict): Dict to be applied all reduce op.
+@@ -117,7 +117,7 @@ def all_reduce_dict(py_dict, op='sum', group=None, to_float=True):
+         OrderedDict: reduced python dict object.
+     """
+     warnings.warn(
+-        'group` is deprecated. Currently only supports NCCL backend.')
++        'group` is deprecated. Currently only supports MCCL backend.')
+     _, world_size = get_dist_info()
+     if world_size == 1:
+         return py_dict
+@@ -154,7 +154,7 @@ def all_reduce_dict(py_dict, op='sum', group=None, to_float=True):
+     return out_dict
+ 
+ 
+-def sync_random_seed(seed=None, device='cuda'):
++def sync_random_seed(seed=None, device='musa'):
+     """Make sure different ranks share the same seed.
+ 
+     All workers must call this function, otherwise it will deadlock.
+@@ -171,7 +171,7 @@ def sync_random_seed(seed=None, device='cuda'):
+     Args:
+         seed (int, Optional): The seed. Default to None.
+         device (str): The device where the seed will be put on.
+-            Default to 'cuda'.
++            Default to 'musa'.
+ 
+     Returns:
+         int: Seed to be used.
+diff --git a/mmdet/core/utils/misc.py b/mmdet/core/utils/misc.py
+index 14cb745e..5ddd785b 100644
+--- a/mmdet/core/utils/misc.py
++++ b/mmdet/core/utils/misc.py
+@@ -187,7 +187,7 @@ def center_of_mass(mask, esp=1e-6):
+     return center_h, center_w
+ 
+ 
+-def generate_coordinate(featmap_sizes, device='cuda'):
++def generate_coordinate(featmap_sizes, device='musa'):
+     """Generate the coordinate.
+ 
+     Args:
+diff --git a/mmdet/models/dense_heads/anchor_head.py b/mmdet/models/dense_heads/anchor_head.py
+index d1bfab62..354a618c 100644
+--- a/mmdet/models/dense_heads/anchor_head.py
++++ b/mmdet/models/dense_heads/anchor_head.py
+@@ -168,7 +168,7 @@ class AnchorHead(BaseDenseHead, BBoxTestMixin):
+         """
+         return multi_apply(self.forward_single, feats)
+ 
+-    def get_anchors(self, featmap_sizes, img_metas, device='cuda'):
++    def get_anchors(self, featmap_sizes, img_metas, device='musa'):
+         """Get anchors according to feature map sizes.
+ 
+         Args:
+diff --git a/mmdet/models/dense_heads/guided_anchor_head.py b/mmdet/models/dense_heads/guided_anchor_head.py
+index 53e8cd8a..e49dc1ce 100644
+--- a/mmdet/models/dense_heads/guided_anchor_head.py
++++ b/mmdet/models/dense_heads/guided_anchor_head.py
+@@ -246,7 +246,7 @@ class GuidedAnchorHead(AnchorHead):
+     def forward(self, feats):
+         return multi_apply(self.forward_single, feats)
+ 
+-    def get_sampled_approxs(self, featmap_sizes, img_metas, device='cuda'):
++    def get_sampled_approxs(self, featmap_sizes, img_metas, device='musa'):
+         """Get sampled approxs and inside flags according to feature map sizes.
+ 
+         Args:
+@@ -302,7 +302,7 @@ class GuidedAnchorHead(AnchorHead):
+                     loc_preds,
+                     img_metas,
+                     use_loc_filter=False,
+-                    device='cuda'):
++                    device='musa'):
+         """Get squares according to feature map sizes and guided anchors.
+ 
+         Args:
+diff --git a/mmdet/models/dense_heads/sabl_retina_head.py b/mmdet/models/dense_heads/sabl_retina_head.py
+index 4fede710..52da1314 100644
+--- a/mmdet/models/dense_heads/sabl_retina_head.py
++++ b/mmdet/models/dense_heads/sabl_retina_head.py
+@@ -207,7 +207,7 @@ class SABLRetinaHead(BaseDenseHead, BBoxTestMixin):
+     def forward(self, feats):
+         return multi_apply(self.forward_single, feats)
+ 
+-    def get_anchors(self, featmap_sizes, img_metas, device='cuda'):
++    def get_anchors(self, featmap_sizes, img_metas, device='musa'):
+         """Get squares according to feature map sizes and guided anchors.
+ 
+         Args:
+diff --git a/mmdet/models/dense_heads/vfnet_head.py b/mmdet/models/dense_heads/vfnet_head.py
+index ba285e22..ba6fbdca 100644
+--- a/mmdet/models/dense_heads/vfnet_head.py
++++ b/mmdet/models/dense_heads/vfnet_head.py
+@@ -565,7 +565,7 @@ class VFNetHead(ATSSHead, FCOSHead):
+         bbox_weights = None
+         return labels, label_weights, bbox_targets, bbox_weights
+ 
+-    def get_anchors(self, featmap_sizes, img_metas, device='cuda'):
++    def get_anchors(self, featmap_sizes, img_metas, device='musa'):
+         """Get anchors according to feature map sizes.
+ 
+         Args:
+diff --git a/mmdet/models/detectors/kd_one_stage.py b/mmdet/models/detectors/kd_one_stage.py
+index fb66b515..1b5ccce3 100644
+--- a/mmdet/models/detectors/kd_one_stage.py
++++ b/mmdet/models/detectors/kd_one_stage.py
+@@ -75,11 +75,11 @@ class KnowledgeDistillationSingleStageDetector(SingleStageDetector):
+                                               gt_bboxes_ignore)
+         return losses
+ 
+-    def cuda(self, device=None):
++    def musa(self, device=None):
+         """Since teacher_model is registered as a plain object, it is necessary
+-        to put the teacher model to cuda when calling cuda function."""
+-        self.teacher_model.cuda(device=device)
+-        return super().cuda(device=device)
++        to put the teacher model to musa when calling musa function."""
++        self.teacher_model.musa(device=device)
++        return super().musa(device=device)
+ 
+     def train(self, mode=True):
+         """Set the same train mode for teacher and student model."""
+diff --git a/mmdet/models/losses/focal_loss.py b/mmdet/models/losses/focal_loss.py
+index 2858c198..2f5380bd 100644
+--- a/mmdet/models/losses/focal_loss.py
++++ b/mmdet/models/losses/focal_loss.py
+@@ -117,7 +117,7 @@ def sigmoid_focal_loss(pred,
+                        alpha=0.25,
+                        reduction='mean',
+                        avg_factor=None):
+-    r"""A wrapper of cuda version `Focal Loss
++    r"""A wrapper of musa version `Focal Loss
+     <https://arxiv.org/abs/1708.02002>`_.
+ 
+     Args:
+@@ -222,7 +222,7 @@ class FocalLoss(nn.Module):
+             if self.activated:
+                 calculate_loss_func = py_focal_loss_with_prob
+             else:
+-                if torch.cuda.is_available() and pred.is_cuda:
++                if torch.musa.is_available() and pred.is_musa:
+                     calculate_loss_func = sigmoid_focal_loss
+                 else:
+                     num_classes = pred.size(1)
+diff --git a/mmdet/utils/__init__.py b/mmdet/utils/__init__.py
+index f57acb5f..35ff98dc 100644
+--- a/mmdet/utils/__init__.py
++++ b/mmdet/utils/__init__.py
+@@ -2,7 +2,7 @@
+ from .collect_env import collect_env
+ from .compat_config import compat_cfg
+ from .logger import get_caller_name, get_root_logger, log_img_scale
+-from .memory import AvoidCUDAOOM, AvoidOOM
++from .memory import AvoidMUSAOOM, AvoidOOM
+ from .misc import find_latest_checkpoint, update_data_root
+ from .replace_cfg_vals import replace_cfg_vals
+ from .setup_env import setup_multi_processes
+@@ -13,5 +13,5 @@ __all__ = [
+     'get_root_logger', 'collect_env', 'find_latest_checkpoint',
+     'update_data_root', 'setup_multi_processes', 'get_caller_name',
+     'log_img_scale', 'compat_cfg', 'split_batch', 'build_ddp', 'build_dp',
+-    'get_device', 'replace_cfg_vals', 'AvoidOOM', 'AvoidCUDAOOM'
++    'get_device', 'replace_cfg_vals', 'AvoidOOM', 'AvoidMUSAOOM'
+ ]
+diff --git a/mmdet/utils/contextmanagers.py b/mmdet/utils/contextmanagers.py
+index fa12bfca..242c5f32 100644
+--- a/mmdet/utils/contextmanagers.py
++++ b/mmdet/utils/contextmanagers.py
+@@ -17,25 +17,25 @@ DEBUG_COMPLETED_TIME = bool(os.environ.get('DEBUG_COMPLETED_TIME', False))
+ async def completed(trace_name='',
+                     name='',
+                     sleep_interval=0.05,
+-                    streams: List[torch.cuda.Stream] = None):
+-    """Async context manager that waits for work to complete on given CUDA
++                    streams: List[torch.musa.Stream] = None):
++    """Async context manager that waits for work to complete on given MUSA
+     streams."""
+-    if not torch.cuda.is_available():
++    if not torch.musa.is_available():
+         yield
+         return
+ 
+-    stream_before_context_switch = torch.cuda.current_stream()
++    stream_before_context_switch = torch.musa.current_stream()
+     if not streams:
+         streams = [stream_before_context_switch]
+     else:
+         streams = [s if s else stream_before_context_switch for s in streams]
+ 
+     end_events = [
+-        torch.cuda.Event(enable_timing=DEBUG_COMPLETED_TIME) for _ in streams
++        torch.musa.Event(enable_timing=DEBUG_COMPLETED_TIME) for _ in streams
+     ]
+ 
+     if DEBUG_COMPLETED_TIME:
+-        start = torch.cuda.Event(enable_timing=True)
++        start = torch.musa.Event(enable_timing=True)
+         stream_before_context_switch.record_event(start)
+ 
+         cpu_start = time.monotonic()
+@@ -44,7 +44,7 @@ async def completed(trace_name='',
+     try:
+         yield
+     finally:
+-        current_stream = torch.cuda.current_stream()
++        current_stream = torch.musa.current_stream()
+         assert current_stream == stream_before_context_switch
+ 
+         if DEBUG_COMPLETED_TIME:
+@@ -63,7 +63,7 @@ async def completed(trace_name='',
+         are_done = [e.query() for e in end_events]
+         logger.debug('%s %s completed: %s streams: %s', trace_name, name,
+                      are_done, streams)
+-        with torch.cuda.stream(stream_before_context_switch):
++        with torch.musa.stream(stream_before_context_switch):
+             while not all(are_done):
+                 await asyncio.sleep(sleep_interval)
+                 are_done = [e.query() for e in end_events]
+@@ -75,7 +75,7 @@ async def completed(trace_name='',
+                     streams,
+                 )
+ 
+-        current_stream = torch.cuda.current_stream()
++        current_stream = torch.musa.current_stream()
+         assert current_stream == stream_before_context_switch
+ 
+         if DEBUG_COMPLETED_TIME:
+@@ -98,22 +98,22 @@ async def concurrent(streamqueue: asyncio.Queue,
+ 
+     Queue tasks define the pool of streams used for concurrent execution.
+     """
+-    if not torch.cuda.is_available():
++    if not torch.musa.is_available():
+         yield
+         return
+ 
+-    initial_stream = torch.cuda.current_stream()
++    initial_stream = torch.musa.current_stream()
+ 
+-    with torch.cuda.stream(initial_stream):
++    with torch.musa.stream(initial_stream):
+         stream = await streamqueue.get()
+-        assert isinstance(stream, torch.cuda.Stream)
++        assert isinstance(stream, torch.musa.Stream)
+ 
+         try:
+-            with torch.cuda.stream(stream):
++            with torch.musa.stream(stream):
+                 logger.debug('%s %s is starting, stream: %s', trace_name, name,
+                              stream)
+                 yield
+-                current = torch.cuda.current_stream()
++                current = torch.musa.current_stream()
+                 assert current == stream
+                 logger.debug('%s %s has finished, stream: %s', trace_name,
+                              name, stream)
+diff --git a/mmdet/utils/memory.py b/mmdet/utils/memory.py
+index eb212bca..4037d6be 100644
+--- a/mmdet/utils/memory.py
++++ b/mmdet/utils/memory.py
+@@ -60,8 +60,8 @@ def cast_tensor_type(inputs, src_type=None, dst_type=None):
+ 
+ 
+ @contextmanager
+-def _ignore_torch_cuda_oom():
+-    """A context which ignores CUDA OOM exception from pytorch.
++def _ignore_torch_musa_oom():
++    """A context which ignores MUSA OOM exception from pytorch.
+ 
+     Code is modified from
+     <https://github.com/facebookresearch/detectron2/blob/main/detectron2/utils/memory.py>  # noqa: E501
+@@ -70,17 +70,17 @@ def _ignore_torch_cuda_oom():
+         yield
+     except RuntimeError as e:
+         # NOTE: the string may change?
+-        if 'CUDA out of memory. ' in str(e):
++        if 'MUSA out of memory. ' in str(e):
+             pass
+         else:
+             raise
+ 
+ 
+ class AvoidOOM:
+-    """Try to convert inputs to FP16 and CPU if got a PyTorch's CUDA Out of
++    """Try to convert inputs to FP16 and CPU if got a PyTorch's MUSA Out of
+     Memory error. It will do the following steps:
+ 
+-        1. First retry after calling `torch.cuda.empty_cache()`.
++        1. First retry after calling `torch.musa.empty_cache()`.
+         2. If that still fails, it will then retry by converting inputs
+           to FP16.
+         3. If that still fails trying to convert inputs to CPUs.
+@@ -91,18 +91,18 @@ class AvoidOOM:
+         to_cpu (bool): Whether to convert outputs to CPU if get an OOM
+             error. This will slow down the code significantly.
+             Defaults to True.
+-        test (bool): Skip `_ignore_torch_cuda_oom` operate that can use
++        test (bool): Skip `_ignore_torch_musa_oom` operate that can use
+             lightweight data in unit test, only used in
+             test unit. Defaults to False.
+ 
+     Examples:
+         >>> from mmdet.utils.memory import AvoidOOM
+-        >>> AvoidCUDAOOM = AvoidOOM()
+-        >>> output = AvoidOOM.retry_if_cuda_oom(
++        >>> AvoidMUSAOOM = AvoidOOM()
++        >>> output = AvoidOOM.retry_if_musa_oom(
+         >>>     some_torch_function)(input1, input2)
+         >>> # To use as a decorator
+-        >>> # from mmdet.utils import AvoidCUDAOOM
+-        >>> @AvoidCUDAOOM.retry_if_cuda_oom
++        >>> # from mmdet.utils import AvoidMUSAOOM
++        >>> @AvoidMUSAOOM.retry_if_musa_oom
+         >>> def function(*args, **kwargs):
+         >>>     return None
+     ```
+@@ -121,8 +121,8 @@ class AvoidOOM:
+         self.to_cpu = to_cpu
+         self.test = test
+ 
+-    def retry_if_cuda_oom(self, func):
+-        """Makes a function retry itself after encountering pytorch's CUDA OOM
++    def retry_if_musa_oom(self, func):
++        """Makes a function retry itself after encountering pytorch's MUSA OOM
+         error.
+ 
+         The implementation logic is referred to
+@@ -140,12 +140,12 @@ class AvoidOOM:
+ 
+             # raw function
+             if not self.test:
+-                with _ignore_torch_cuda_oom():
++                with _ignore_torch_musa_oom():
+                     return func(*args, **kwargs)
+ 
+                 # Clear cache and retry
+-                torch.cuda.empty_cache()
+-                with _ignore_torch_cuda_oom():
++                torch.musa.empty_cache()
++                with _ignore_torch_musa_oom():
+                     return func(*args, **kwargs)
+ 
+             # get the type and device of first tensor
+@@ -165,49 +165,49 @@ class AvoidOOM:
+             fp16_kwargs = cast_tensor_type(kwargs, dst_type=torch.half)
+             logger = get_root_logger()
+             logger.warning(f'Attempting to copy inputs of {str(func)} '
+-                           'to FP16 due to CUDA OOM')
++                           'to FP16 due to MUSA OOM')
+ 
+             # get input tensor type, the output type will same as
+             # the first parameter type.
+-            with _ignore_torch_cuda_oom():
++            with _ignore_torch_musa_oom():
+                 output = func(*fp16_args, **fp16_kwargs)
+                 output = cast_tensor_type(
+                     output, src_type=torch.half, dst_type=dtype)
+                 if not self.test:
+                     return output
+-            logger.warning('Using FP16 still meet CUDA OOM')
++            logger.warning('Using FP16 still meet MUSA OOM')
+ 
+             # Try on CPU. This will slow down the code significantly,
+             # therefore print a notice.
+             if self.to_cpu:
+                 logger.warning(f'Attempting to copy inputs of {str(func)} '
+-                               'to CPU due to CUDA OOM')
++                               'to CPU due to MUSA OOM')
+                 cpu_device = torch.empty(0).device
+                 cpu_args = cast_tensor_type(args, dst_type=cpu_device)
+                 cpu_kwargs = cast_tensor_type(kwargs, dst_type=cpu_device)
+ 
+                 # convert outputs to GPU
+-                with _ignore_torch_cuda_oom():
++                with _ignore_torch_musa_oom():
+                     logger.warning(f'Convert outputs to GPU (device={device})')
+                     output = func(*cpu_args, **cpu_kwargs)
+                     output = cast_tensor_type(
+                         output, src_type=cpu_device, dst_type=device)
+                     return output
+ 
+-                warnings.warn('Cannot convert output to GPU due to CUDA OOM, '
++                warnings.warn('Cannot convert output to GPU due to MUSA OOM, '
+                               'the output is now on CPU, which might cause '
+                               'errors if the output need to interact with GPU '
+                               'data in subsequent operations')
+                 logger.warning('Cannot convert output to GPU due to '
+-                               'CUDA OOM, the output is on CPU now.')
++                               'MUSA OOM, the output is on CPU now.')
+ 
+                 return func(*cpu_args, **cpu_kwargs)
+             else:
+-                # may still get CUDA OOM error
++                # may still get MUSA OOM error
+                 return func(*args, **kwargs)
+ 
+         return wrapped
+ 
+ 
+ # To use AvoidOOM as a decorator
+-AvoidCUDAOOM = AvoidOOM()
++AvoidMUSAOOM = AvoidOOM()
+diff --git a/mmdet/utils/profiling.py b/mmdet/utils/profiling.py
+index 2f53f456..83128493 100644
+--- a/mmdet/utils/profiling.py
++++ b/mmdet/utils/profiling.py
+@@ -18,13 +18,13 @@ if sys.version_info >= (3, 7):
+         Useful as a temporary context manager to find sweet spots of code
+         suitable for async implementation.
+         """
+-        if (not enabled) or not torch.cuda.is_available():
++        if (not enabled) or not torch.musa.is_available():
+             yield
+             return
+-        stream = stream if stream else torch.cuda.current_stream()
++        stream = stream if stream else torch.musa.current_stream()
+         end_stream = end_stream if end_stream else stream
+-        start = torch.cuda.Event(enable_timing=True)
+-        end = torch.cuda.Event(enable_timing=True)
++        start = torch.musa.Event(enable_timing=True)
++        end = torch.musa.Event(enable_timing=True)
+         stream.record_event(start)
+         try:
+             cpu_start = time.monotonic()
+diff --git a/mmdet/utils/util_distribution.py b/mmdet/utils/util_distribution.py
+index ba32cc9f..d247fd05 100644
+--- a/mmdet/utils/util_distribution.py
++++ b/mmdet/utils/util_distribution.py
+@@ -2,20 +2,20 @@
+ import torch
+ from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
+ 
+-dp_factory = {'cuda': MMDataParallel, 'cpu': MMDataParallel}
++dp_factory = {'musa': MMDataParallel, 'cpu': MMDataParallel}
+ 
+-ddp_factory = {'cuda': MMDistributedDataParallel}
++ddp_factory = {'musa': MMDistributedDataParallel}
+ 
+ 
+-def build_dp(model, device='cuda', dim=0, *args, **kwargs):
++def build_dp(model, device='musa', dim=0, *args, **kwargs):
+     """build DataParallel module by device type.
+ 
+-    if device is cuda, return a MMDataParallel model; if device is mlu,
++    if device is musa, return a MMDataParallel model; if device is mlu,
+     return a MLUDataParallel model.
+ 
+     Args:
+         model (:class:`nn.Module`): model to be parallelized.
+-        device (str): device type, cuda, cpu or mlu. Defaults to cuda.
++        device (str): device type, musa, cpu or mlu. Defaults to musa.
+         dim (int): Dimension used to scatter the data. Defaults to 0.
+ 
+     Returns:
+@@ -27,8 +27,8 @@ def build_dp(model, device='cuda', dim=0, *args, **kwargs):
+         torch.npu.set_device(kwargs['device_ids'][0])
+         torch.npu.set_compile_mode(jit_compile=False)
+         model = model.npu()
+-    elif device == 'cuda':
+-        model = model.cuda(kwargs['device_ids'][0])
++    elif device == 'musa':
++        model = model.musa(kwargs['device_ids'][0])
+     elif device == 'mlu':
+         from mmcv.device.mlu import MLUDataParallel
+         dp_factory['mlu'] = MLUDataParallel
+@@ -37,15 +37,15 @@ def build_dp(model, device='cuda', dim=0, *args, **kwargs):
+     return dp_factory[device](model, dim=dim, *args, **kwargs)
+ 
+ 
+-def build_ddp(model, device='cuda', *args, **kwargs):
++def build_ddp(model, device='musa', *args, **kwargs):
+     """Build DistributedDataParallel module by device type.
+ 
+-    If device is cuda, return a MMDistributedDataParallel model;
++    If device is musa, return a MMDistributedDataParallel model;
+     if device is mlu, return a MLUDistributedDataParallel model.
+ 
+     Args:
+         model (:class:`nn.Module`): module to be parallelized.
+-        device (str): device type, mlu or cuda.
++        device (str): device type, mlu or musa.
+ 
+     Returns:
+         :class:`nn.Module`: the module to be parallelized
+@@ -54,15 +54,15 @@ def build_ddp(model, device='cuda', *args, **kwargs):
+         .. [1] https://pytorch.org/docs/stable/generated/torch.nn.parallel.
+                      DistributedDataParallel.html
+     """
+-    assert device in ['cuda', 'mlu',
+-                      'npu'], 'Only available for cuda or mlu or npu devices.'
++    assert device in ['musa', 'mlu',
++                      'npu'], 'Only available for musa or mlu or npu devices.'
+     if device == 'npu':
+         from mmcv.device.npu import NPUDistributedDataParallel
+         torch.npu.set_compile_mode(jit_compile=False)
+         ddp_factory['npu'] = NPUDistributedDataParallel
+         model = model.npu()
+-    elif device == 'cuda':
+-        model = model.cuda()
++    elif device == 'musa':
++        model = model.musa()
+     elif device == 'mlu':
+         from mmcv.device.mlu import MLUDistributedDataParallel
+         ddp_factory['mlu'] = MLUDistributedDataParallel
+@@ -82,10 +82,10 @@ def is_mlu_available():
+ 
+ 
+ def get_device():
+-    """Returns an available device, cpu, cuda or mlu."""
++    """Returns an available device, cpu, musa or mlu."""
+     is_device_available = {
+         'npu': is_npu_available(),
+-        'cuda': torch.cuda.is_available(),
++        'musa': torch.musa.is_available(),
+         'mlu': is_mlu_available()
+     }
+     device_list = [k for k, v in is_device_available.items() if v]

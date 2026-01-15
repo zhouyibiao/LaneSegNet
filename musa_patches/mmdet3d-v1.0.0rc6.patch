@@ -1,0 +1,658 @@
+diff --git a/mmdet3d/apis/inference.py b/mmdet3d/apis/inference.py
+index 017e85ee..0aed9000 100644
+--- a/mmdet3d/apis/inference.py
++++ b/mmdet3d/apis/inference.py
+@@ -35,7 +35,7 @@ def convert_SyncBN(config):
+                 convert_SyncBN(config[item])
+ 
+ 
+-def init_model(config, checkpoint=None, device='cuda:0'):
++def init_model(config, checkpoint=None, device='musa:0'):
+     """Initialize a model from config file, which could be a 3D detector or a
+     3D segmentor.
+ 
+@@ -68,7 +68,7 @@ def init_model(config, checkpoint=None, device='cuda:0'):
+             model.PALETTE = checkpoint['meta']['PALETTE']
+     model.cfg = config  # save the config in the model for convenience
+     if device != 'cpu':
+-        torch.cuda.set_device(device)
++        torch.musa.set_device(device)
+     else:
+         logger = get_root_logger()
+         logger.warning('Don\'t suggest using CPU device. '
+@@ -139,7 +139,7 @@ def inference_detector(model, pcd):
+             seg_fields=[])
+     data = test_pipeline(data)
+     data = collate([data], samples_per_gpu=1)
+-    if next(model.parameters()).is_cuda:
++    if next(model.parameters()).is_musa:
+         # scatter to specified GPU
+         data = scatter(data, [device.index])[0]
+     else:
+@@ -212,7 +212,7 @@ def inference_multi_modality_detector(model, pcd, image, ann_file):
+         data['img_metas'][0].data['depth2img'] = depth2img
+ 
+     data = collate([data], samples_per_gpu=1)
+-    if next(model.parameters()).is_cuda:
++    if next(model.parameters()).is_musa:
+         # scatter to specified GPU
+         data = scatter(data, [device.index])[0]
+     else:
+@@ -272,7 +272,7 @@ def inference_mono_3d_detector(model, image, ann_file):
+     data = test_pipeline(data)
+ 
+     data = collate([data], samples_per_gpu=1)
+-    if next(model.parameters()).is_cuda:
++    if next(model.parameters()).is_musa:
+         # scatter to specified GPU
+         data = scatter(data, [device.index])[0]
+     else:
+@@ -312,7 +312,7 @@ def inference_segmentor(model, pcd):
+         seg_fields=[])
+     data = test_pipeline(data)
+     data = collate([data], samples_per_gpu=1)
+-    if next(model.parameters()).is_cuda:
++    if next(model.parameters()).is_musa:
+         # scatter to specified GPU
+         data = scatter(data, [device.index])[0]
+     else:
+diff --git a/mmdet3d/apis/train.py b/mmdet3d/apis/train.py
+index 4d970264..e542f824 100644
+--- a/mmdet3d/apis/train.py
++++ b/mmdet3d/apis/train.py
+@@ -24,7 +24,7 @@ from mmseg.datasets import build_dataloader as build_mmseg_dataloader
+ from mmseg.utils import get_root_logger as get_mmseg_root_logger
+ 
+ 
+-def init_random_seed(seed=None, device='cuda'):
++def init_random_seed(seed=None, device='musa'):
+     """Initialize random seed.
+ 
+     If the seed is not set, the seed will be automatically randomized,
+@@ -32,7 +32,7 @@ def init_random_seed(seed=None, device='cuda'):
+     Args:
+         seed (int, optional): The seed. Default to None.
+         device (str, optional): The device where the seed will be put on.
+-            Default to 'cuda'.
++            Default to 'musa'.
+     Returns:
+         int: Seed to be used.
+     """
+@@ -68,7 +68,7 @@ def set_random_seed(seed, deterministic=False):
+     random.seed(seed)
+     np.random.seed(seed)
+     torch.manual_seed(seed)
+-    torch.cuda.manual_seed_all(seed)
++    torch.musa.manual_seed_all(seed)
+     if deterministic:
+         torch.backends.cudnn.deterministic = True
+         torch.backends.cudnn.benchmark = False
+@@ -104,13 +104,13 @@ def train_segmentor(model,
+         # Sets the `find_unused_parameters` parameter in
+         # torch.nn.parallel.DistributedDataParallel
+         model = MMDistributedDataParallel(
+-            model.cuda(),
+-            device_ids=[torch.cuda.current_device()],
++            model.musa(),
++            device_ids=[torch.musa.current_device()],
+             broadcast_buffers=False,
+             find_unused_parameters=find_unused_parameters)
+     else:
+         model = MMDataParallel(
+-            model.cuda(cfg.gpu_ids[0]), device_ids=cfg.gpu_ids)
++            model.musa(cfg.gpu_ids[0]), device_ids=cfg.gpu_ids)
+ 
+     # build runner
+     optimizer = build_optimizer(model, cfg.optimizer)
+@@ -224,13 +224,13 @@ def train_detector(model,
+         # Sets the `find_unused_parameters` parameter in
+         # torch.nn.parallel.DistributedDataParallel
+         model = MMDistributedDataParallel(
+-            model.cuda(),
+-            device_ids=[torch.cuda.current_device()],
++            model.musa(),
++            device_ids=[torch.musa.current_device()],
+             broadcast_buffers=False,
+             find_unused_parameters=find_unused_parameters)
+     else:
+         model = MMDataParallel(
+-            model.cuda(cfg.gpu_ids[0]), device_ids=cfg.gpu_ids)
++            model.musa(cfg.gpu_ids[0]), device_ids=cfg.gpu_ids)
+ 
+     # build runner
+     optimizer = build_optimizer(model, cfg.optimizer)
+diff --git a/mmdet3d/core/anchor/anchor_3d_generator.py b/mmdet3d/core/anchor/anchor_3d_generator.py
+index e8681b71..463779cc 100644
+--- a/mmdet3d/core/anchor/anchor_3d_generator.py
++++ b/mmdet3d/core/anchor/anchor_3d_generator.py
+@@ -86,14 +86,14 @@ class Anchor3DRangeGenerator(object):
+         """int: Number of feature levels that the generator is applied to."""
+         return len(self.scales)
+ 
+-    def grid_anchors(self, featmap_sizes, device='cuda'):
++    def grid_anchors(self, featmap_sizes, device='musa'):
+         """Generate grid anchors in multiple feature levels.
+ 
+         Args:
+             featmap_sizes (list[tuple]): List of feature map sizes in
+                 multiple feature levels.
+             device (str, optional): Device where the anchors will be put on.
+-                Defaults to 'cuda'.
++                Defaults to 'musa'.
+ 
+         Returns:
+             list[torch.Tensor]: Anchors in multiple feature levels.
+@@ -112,7 +112,7 @@ class Anchor3DRangeGenerator(object):
+             multi_level_anchors.append(anchors)
+         return multi_level_anchors
+ 
+-    def single_level_grid_anchors(self, featmap_size, scale, device='cuda'):
++    def single_level_grid_anchors(self, featmap_size, scale, device='musa'):
+         """Generate grid anchors of a single level feature map.
+ 
+         This function is usually called by method ``self.grid_anchors``.
+@@ -121,12 +121,12 @@ class Anchor3DRangeGenerator(object):
+             featmap_size (tuple[int]): Size of the feature map.
+             scale (float): Scale factor of the anchors in the current level.
+             device (str, optional): Device the tensor will be put on.
+-                Defaults to 'cuda'.
++                Defaults to 'musa'.
+ 
+         Returns:
+             torch.Tensor: Anchors in the overall feature map.
+         """
+-        # We reimplement the anchor generator using torch in cuda
++        # We reimplement the anchor generator using torch in musa
+         # torch: 0.6975 s for 1000 times
+         # numpy: 4.3345 s for 1000 times
+         # which is ~5 times faster than the numpy implementation
+@@ -158,7 +158,7 @@ class Anchor3DRangeGenerator(object):
+                              scale=1,
+                              sizes=[[3.9, 1.6, 1.56]],
+                              rotations=[0, 1.5707963],
+-                             device='cuda'):
++                             device='musa'):
+         """Generate anchors in a single range.
+ 
+         Args:
+@@ -176,7 +176,7 @@ class Anchor3DRangeGenerator(object):
+                 Rotations of anchors in a single feature grid.
+                 Defaults to [0, 1.5707963].
+             device (str): Devices that the anchors will be put on.
+-                Defaults to 'cuda'.
++                Defaults to 'musa'.
+ 
+         Returns:
+             torch.Tensor: Anchors with shape
+@@ -258,7 +258,7 @@ class AlignedAnchor3DRangeGenerator(Anchor3DRangeGenerator):
+                              scale,
+                              sizes=[[3.9, 1.6, 1.56]],
+                              rotations=[0, 1.5707963],
+-                             device='cuda'):
++                             device='musa'):
+         """Generate anchors in a single range.
+ 
+         Args:
+@@ -275,7 +275,7 @@ class AlignedAnchor3DRangeGenerator(Anchor3DRangeGenerator):
+                 Rotations of anchors in a single feature grid.
+                 Defaults to [0, 1.5707963].
+             device (str, optional): Devices that the anchors will be put on.
+-                Defaults to 'cuda'.
++                Defaults to 'musa'.
+ 
+         Returns:
+             torch.Tensor: Anchors with shape
+@@ -357,14 +357,14 @@ class AlignedAnchor3DRangeGeneratorPerCls(AlignedAnchor3DRangeGenerator):
+         assert len(self.scales) == 1, 'Multi-scale feature map levels are' + \
+             ' not supported currently in this kind of anchor generator.'
+ 
+-    def grid_anchors(self, featmap_sizes, device='cuda'):
++    def grid_anchors(self, featmap_sizes, device='musa'):
+         """Generate grid anchors in multiple feature levels.
+ 
+         Args:
+             featmap_sizes (list[tuple]): List of feature map sizes for
+                 different classes in a single feature level.
+             device (str, optional): Device where the anchors will be put on.
+-                Defaults to 'cuda'.
++                Defaults to 'musa'.
+ 
+         Returns:
+             list[list[torch.Tensor]]: Anchors in multiple feature levels.
+@@ -379,7 +379,7 @@ class AlignedAnchor3DRangeGeneratorPerCls(AlignedAnchor3DRangeGenerator):
+         multi_level_anchors.append(anchors)
+         return multi_level_anchors
+ 
+-    def multi_cls_grid_anchors(self, featmap_sizes, scale, device='cuda'):
++    def multi_cls_grid_anchors(self, featmap_sizes, scale, device='musa'):
+         """Generate grid anchors of a single level feature map for multi-class
+         with different feature map sizes.
+ 
+@@ -390,7 +390,7 @@ class AlignedAnchor3DRangeGeneratorPerCls(AlignedAnchor3DRangeGenerator):
+                 different classes in a single feature level.
+             scale (float): Scale factor of the anchors in the current level.
+             device (str, optional): Device the tensor will be put on.
+-                Defaults to 'cuda'.
++                Defaults to 'musa'.
+ 
+         Returns:
+             torch.Tensor: Anchors in the overall feature map.
+diff --git a/mmdet3d/core/bbox/iou_calculators/iou3d_calculator.py b/mmdet3d/core/bbox/iou_calculators/iou3d_calculator.py
+index 2b1d8eab..96dab023 100644
+--- a/mmdet3d/core/bbox/iou_calculators/iou3d_calculator.py
++++ b/mmdet3d/core/bbox/iou_calculators/iou3d_calculator.py
+@@ -68,7 +68,7 @@ class BboxOverlaps3D(object):
+         self.coordinate = coordinate
+ 
+     def __call__(self, bboxes1, bboxes2, mode='iou'):
+-        """Calculate 3D IoU using cuda implementation.
++        """Calculate 3D IoU using musa implementation.
+ 
+         Note:
+             This function calculate the IoU of 3D boxes based on their volumes.
+@@ -135,7 +135,7 @@ def bbox_overlaps_nearest_3d(bboxes1,
+     bboxes2 = box_type(bboxes2, box_dim=bboxes2.shape[-1])
+ 
+     # Change the bboxes to bev
+-    # box conversion and iou calculation in torch version on CUDA
++    # box conversion and iou calculation in torch version on MUSA
+     # is 10x faster than that in numpy version
+     bboxes1_bev = bboxes1.nearest_bev
+     bboxes2_bev = bboxes2.nearest_bev
+@@ -146,7 +146,7 @@ def bbox_overlaps_nearest_3d(bboxes1,
+ 
+ 
+ def bbox_overlaps_3d(bboxes1, bboxes2, mode='iou', coordinate='camera'):
+-    """Calculate 3D IoU using cuda implementation.
++    """Calculate 3D IoU using musa implementation.
+ 
+     Note:
+         This function calculates the IoU of 3D boxes based on their volumes.
+diff --git a/mmdet3d/core/post_processing/box3d_nms.py b/mmdet3d/core/post_processing/box3d_nms.py
+index 2d42085e..7cf9310f 100644
+--- a/mmdet3d/core/post_processing/box3d_nms.py
++++ b/mmdet3d/core/post_processing/box3d_nms.py
+@@ -226,7 +226,7 @@ def circle_nms(dets, thresh, post_max_size=83):
+ 
+ 
+ # This function duplicates functionality of mmcv.ops.iou_3d.nms_bev
+-# from mmcv<=1.5, but using cuda ops from mmcv.ops.nms.nms_rotated.
++# from mmcv<=1.5, but using musa ops from mmcv.ops.nms.nms_rotated.
+ # Nms api will be unified in mmdetection3d one day.
+ def nms_bev(boxes, scores, thresh, pre_max_size=None, post_max_size=None):
+     """NMS function GPU implementation (for BEV boxes). The overlap of two
+@@ -269,7 +269,7 @@ def nms_bev(boxes, scores, thresh, pre_max_size=None, post_max_size=None):
+ 
+ 
+ # This function duplicates functionality of mmcv.ops.iou_3d.nms_normal_bev
+-# from mmcv<=1.5, but using cuda ops from mmcv.ops.nms.nms.
++# from mmcv<=1.5, but using musa ops from mmcv.ops.nms.nms.
+ # Nms api will be unified in mmdetection3d one day.
+ def nms_normal_bev(boxes, scores, thresh):
+     """Normal NMS function GPU implementation (for BEV boxes). The overlap of
+diff --git a/mmdet3d/datasets/nuscenes_mono_dataset.py b/mmdet3d/datasets/nuscenes_mono_dataset.py
+index c3eb8f1a..25d1af4e 100644
+--- a/mmdet3d/datasets/nuscenes_mono_dataset.py
++++ b/mmdet3d/datasets/nuscenes_mono_dataset.py
+@@ -829,11 +829,11 @@ def nusc_box_to_cam_box3d(boxes):
+     dims[:, [0, 1, 2]] = dims[:, [1, 2, 0]]
+     rots = -rots
+ 
+-    boxes_3d = torch.cat([locs, dims, rots, velocity], dim=1).cuda()
++    boxes_3d = torch.cat([locs, dims, rots, velocity], dim=1).musa()
+     cam_boxes3d = CameraInstance3DBoxes(
+         boxes_3d, box_dim=9, origin=(0.5, 0.5, 0.5))
+-    scores = torch.Tensor([b.score for b in boxes]).cuda()
+-    labels = torch.LongTensor([b.label for b in boxes]).cuda()
++    scores = torch.Tensor([b.score for b in boxes]).musa()
++    labels = torch.LongTensor([b.label for b in boxes]).musa()
+     nms_scores = scores.new_zeros(scores.shape[0], 10 + 1)
+     indices = labels.new_tensor(list(range(scores.shape[0])))
+     nms_scores[indices, labels] = scores
+diff --git a/mmdet3d/models/dense_heads/anchor3d_head.py b/mmdet3d/models/dense_heads/anchor3d_head.py
+index b7472645..50f14795 100644
+--- a/mmdet3d/models/dense_heads/anchor3d_head.py
++++ b/mmdet3d/models/dense_heads/anchor3d_head.py
+@@ -171,7 +171,7 @@ class Anchor3DHead(BaseModule, AnchorTrainMixin):
+         """
+         return multi_apply(self.forward_single, feats)
+ 
+-    def get_anchors(self, featmap_sizes, input_metas, device='cuda'):
++    def get_anchors(self, featmap_sizes, input_metas, device='musa'):
+         """Get anchors according to feature map sizes.
+ 
+         Args:
+diff --git a/mmdet3d/models/losses/paconv_regularization_loss.py b/mmdet3d/models/losses/paconv_regularization_loss.py
+index 20017909..53652591 100644
+--- a/mmdet3d/models/losses/paconv_regularization_loss.py
++++ b/mmdet3d/models/losses/paconv_regularization_loss.py
+@@ -2,7 +2,7 @@
+ import torch
+ from torch import nn as nn
+ 
+-from mmdet3d.ops import PAConv, PAConvCUDA
++from mmdet3d.ops import PAConv, PAConvMUSA
+ from mmdet.models.losses.utils import weight_reduce_loss
+ from ..builder import LOSSES
+ 
+@@ -13,12 +13,12 @@ def weight_correlation(conv):
+ 
+     Args:
+         conv (nn.Module): A Conv modules to be regularized.
+-            Currently we only support `PAConv` and `PAConvCUDA`.
++            Currently we only support `PAConv` and `PAConvMUSA`.
+ 
+     Returns:
+         torch.Tensor: Correlations between each kernel weights in weight bank.
+     """
+-    assert isinstance(conv, (PAConv, PAConvCUDA)), \
++    assert isinstance(conv, (PAConv, PAConvMUSA)), \
+         f'unsupported module type {type(conv)}'
+     kernels = conv.weight_bank  # [C_in, num_kernels * C_out]
+     in_channels = conv.in_channels
+@@ -58,7 +58,7 @@ def paconv_regularization_loss(modules, reduction):
+     """
+     corr_loss = []
+     for module in modules:
+-        if isinstance(module, (PAConv, PAConvCUDA)):
++        if isinstance(module, (PAConv, PAConvMUSA)):
+             corr_loss.append(weight_correlation(module))
+     corr_loss = torch.stack(corr_loss)
+ 
+diff --git a/mmdet3d/models/middle_encoders/sparse_encoder.py b/mmdet3d/models/middle_encoders/sparse_encoder.py
+index 9172a079..abcfe100 100644
+--- a/mmdet3d/models/middle_encoders/sparse_encoder.py
++++ b/mmdet3d/models/middle_encoders/sparse_encoder.py
+@@ -364,7 +364,7 @@ class SparseEncoderSASSD(SparseEncoder):
+             pts_labels.append(pts_label)
+             center_offsets.append(center_offset)
+ 
+-        center_offsets = torch.cat(center_offsets).cuda()
++        center_offsets = torch.cat(center_offsets).musa()
+         pts_labels = torch.cat(pts_labels).to(center_offsets.device)
+ 
+         return pts_labels, center_offsets
+@@ -388,7 +388,7 @@ class SparseEncoderSASSD(SparseEncoder):
+         """
+         boxes_num = len(boxes)
+         pts_num = len(points)
+-        points = points.cuda()
++        points = points.musa()
+         boxes = boxes.to(points.device)
+ 
+         box_idxs_of_pts = points_in_boxes_all(points[None, ...], boxes[None,
+diff --git a/mmdet3d/models/utils/edge_indices.py b/mmdet3d/models/utils/edge_indices.py
+index 5dcb71fe..2d59bd8a 100644
+--- a/mmdet3d/models/utils/edge_indices.py
++++ b/mmdet3d/models/utils/edge_indices.py
+@@ -11,9 +11,9 @@ def get_edge_indices(img_metas,
+                      device='cpu'):
+     """Function to filter the objects label outside the image.
+     The edge_indices are generated using numpy on cpu rather
+-    than on CUDA due to the latency issue. When batch size = 8,
++    than on MUSA due to the latency issue. When batch size = 8,
+     this function with numpy array is ~8 times faster than that
+-    with CUDA tensor (0.09s and 0.72s in 100 runs).
++    with MUSA tensor (0.09s and 0.72s in 100 runs).
+ 
+     Args:
+         img_metas (list[dict]): Meta information of each image, e.g.,
+diff --git a/mmdet3d/ops/__init__.py b/mmdet3d/ops/__init__.py
+index 88fb74dc..48119450 100644
+--- a/mmdet3d/ops/__init__.py
++++ b/mmdet3d/ops/__init__.py
+@@ -21,8 +21,8 @@ from mmcv.ops.voxelize import Voxelization, voxelization
+ 
+ from .dgcnn_modules import DGCNNFAModule, DGCNNFPModule, DGCNNGFModule
+ from .norm import NaiveSyncBatchNorm1d, NaiveSyncBatchNorm2d
+-from .paconv import PAConv, PAConvCUDA
+-from .pointnet_modules import (PAConvCUDASAModule, PAConvCUDASAModuleMSG,
++from .paconv import PAConv, PAConvMUSA
++from .pointnet_modules import (PAConvMUSASAModule, PAConvMUSASAModuleMSG,
+                                PAConvSAModule, PAConvSAModuleMSG,
+                                PointFPModule, PointSAModule, PointSAModuleMSG,
+                                build_sa_module)
+@@ -42,7 +42,7 @@ __all__ = [
+     'PointSAModule', 'PointSAModuleMSG', 'PointFPModule', 'DGCNNFPModule',
+     'DGCNNGFModule', 'DGCNNFAModule', 'points_in_boxes_all',
+     'get_compiler_version', 'assign_score_withk', 'get_compiling_cuda_version',
+-    'Points_Sampler', 'build_sa_module', 'PAConv', 'PAConvCUDA',
+-    'PAConvSAModuleMSG', 'PAConvSAModule', 'PAConvCUDASAModule',
+-    'PAConvCUDASAModuleMSG', 'RoIPointPool3d'
++    'Points_Sampler', 'build_sa_module', 'PAConv', 'PAConvMUSA',
++    'PAConvSAModuleMSG', 'PAConvSAModule', 'PAConvMUSASAModule',
++    'PAConvMUSASAModuleMSG', 'RoIPointPool3d'
+ ]
+diff --git a/mmdet3d/ops/paconv/__init__.py b/mmdet3d/ops/paconv/__init__.py
+index d71c7660..bd1a416f 100644
+--- a/mmdet3d/ops/paconv/__init__.py
++++ b/mmdet3d/ops/paconv/__init__.py
+@@ -1,4 +1,4 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
+-from .paconv import PAConv, PAConvCUDA
++from .paconv import PAConv, PAConvMUSA
+ 
+-__all__ = ['PAConv', 'PAConvCUDA']
++__all__ = ['PAConv', 'PAConvMUSA']
+diff --git a/mmdet3d/ops/paconv/paconv.py b/mmdet3d/ops/paconv/paconv.py
+index bda8bfe3..4368c836 100644
+--- a/mmdet3d/ops/paconv/paconv.py
++++ b/mmdet3d/ops/paconv/paconv.py
+@@ -4,7 +4,7 @@ import copy
+ import torch
+ from mmcv.cnn import (ConvModule, build_activation_layer, build_norm_layer,
+                       constant_init)
+-from mmcv.ops import assign_score_withk as assign_score_cuda
++from mmcv.ops import assign_score_withk as assign_score_musa
+ from torch import nn as nn
+ from torch.nn import functional as F
+ 
+@@ -106,7 +106,7 @@ class ScoreNet(nn.Module):
+ 
+ 
+ class PAConv(nn.Module):
+-    """Non-CUDA version of PAConv.
++    """Non-MUSA version of PAConv.
+ 
+     PAConv stores a trainable weight bank containing several kernel weights.
+     Given input points and features, it computes coefficient scores to assemble
+@@ -304,8 +304,8 @@ class PAConv(nn.Module):
+         return (new_features, points_xyz)
+ 
+ 
+-class PAConvCUDA(PAConv):
+-    """CUDA version of PAConv that implements a cuda op to efficiently perform
++class PAConvMUSA(PAConv):
++    """MUSA version of PAConv that implements a musa op to efficiently perform
+     kernel assembling.
+ 
+     Different from vanilla PAConv, the input features of this function is not
+@@ -329,7 +329,7 @@ class PAConvCUDA(PAConv):
+                      score_norm='softmax',
+                      temp_factor=1.0,
+                      last_bn=False)):
+-        super(PAConvCUDA, self).__init__(
++        super(PAConvMUSA, self).__init__(
+             in_channels=in_channels,
+             out_channels=out_channels,
+             num_kernels=num_kernels,
+@@ -341,7 +341,7 @@ class PAConvCUDA(PAConv):
+             scorenet_cfg=scorenet_cfg)
+ 
+         assert self.kernel_input == 'w_neighbor', \
+-            'CUDA implemented PAConv only supports w_neighbor kernel_input'
++            'MUSA implemented PAConv only supports w_neighbor kernel_input'
+ 
+     def forward(self, inputs):
+         """Forward.
+@@ -351,7 +351,7 @@ class PAConvCUDA(PAConv):
+ 
+                 - features (torch.Tensor): (B, in_c, N)
+                     Features of all points in the current point cloud.
+-                    Different from non-CUDA version PAConv, here the features
++                    Different from non-MUSA version PAConv, here the features
+                         are not grouped by each center to form a K dim.
+                 - points_xyz (torch.Tensor): (B, 3, npoint, K)
+                     Coordinates of the grouped points.
+@@ -378,8 +378,8 @@ class PAConvCUDA(PAConv):
+         point_feat, center_feat = assign_kernel_withoutk(
+             features, self.weight_bank, self.num_kernels)
+ 
+-        # aggregate features using custom cuda op
+-        new_features = assign_score_cuda(
++        # aggregate features using custom musa op
++        new_features = assign_score_musa(
+             scores, point_feat, center_feat, points_idx,
+             'sum').contiguous()  # [B, out_c, npoint, K]
+ 
+diff --git a/mmdet3d/ops/paconv/utils.py b/mmdet3d/ops/paconv/utils.py
+index 68e71d51..00978f3e 100644
+--- a/mmdet3d/ops/paconv/utils.py
++++ b/mmdet3d/ops/paconv/utils.py
+@@ -20,9 +20,9 @@ def calc_euclidian_dist(xyz1, xyz2):
+ 
+ def assign_score(scores, point_features):
+     """Perform weighted sum to aggregate output features according to scores.
+-    This function is used in non-CUDA version of PAConv.
++    This function is used in non-MUSA version of PAConv.
+ 
+-    Compared to the cuda op assigh_score_withk, this pytorch implementation
++    Compared to the musa op assigh_score_withk, this pytorch implementation
+         pre-computes output features for the neighbors of all centers, and then
+         performs aggregation. It consumes more GPU memories.
+ 
+@@ -46,7 +46,7 @@ def assign_score(scores, point_features):
+ 
+ def assign_kernel_withoutk(features, kernels, M):
+     """Pre-compute features with weight matrices in weight bank. This function
+-    is used before cuda op assign_score_withk in CUDA version PAConv.
++    is used before musa op assign_score_withk in MUSA version PAConv.
+ 
+     Args:
+         features (torch.Tensor): (B, in_dim, N), input features of all points.
+diff --git a/mmdet3d/ops/pointnet_modules/__init__.py b/mmdet3d/ops/pointnet_modules/__init__.py
+index 99b08eb8..e38fbc21 100644
+--- a/mmdet3d/ops/pointnet_modules/__init__.py
++++ b/mmdet3d/ops/pointnet_modules/__init__.py
+@@ -1,12 +1,12 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
+ from .builder import build_sa_module
+-from .paconv_sa_module import (PAConvCUDASAModule, PAConvCUDASAModuleMSG,
++from .paconv_sa_module import (PAConvMUSASAModule, PAConvMUSASAModuleMSG,
+                                PAConvSAModule, PAConvSAModuleMSG)
+ from .point_fp_module import PointFPModule
+ from .point_sa_module import PointSAModule, PointSAModuleMSG
+ 
+ __all__ = [
+     'build_sa_module', 'PointSAModuleMSG', 'PointSAModule', 'PointFPModule',
+-    'PAConvSAModule', 'PAConvSAModuleMSG', 'PAConvCUDASAModule',
+-    'PAConvCUDASAModuleMSG'
++    'PAConvSAModule', 'PAConvSAModuleMSG', 'PAConvMUSASAModule',
++    'PAConvMUSASAModuleMSG'
+ ]
+diff --git a/mmdet3d/ops/pointnet_modules/paconv_sa_module.py b/mmdet3d/ops/pointnet_modules/paconv_sa_module.py
+index 361ecbb2..c874c18a 100644
+--- a/mmdet3d/ops/pointnet_modules/paconv_sa_module.py
++++ b/mmdet3d/ops/pointnet_modules/paconv_sa_module.py
+@@ -2,7 +2,7 @@
+ import torch
+ from torch import nn as nn
+ 
+-from mmdet3d.ops import PAConv, PAConvCUDA
++from mmdet3d.ops import PAConv, PAConvMUSA
+ from .builder import SA_MODULES
+ from .point_sa_module import BasePointSAModule
+ 
+@@ -151,11 +151,11 @@ class PAConvSAModule(PAConvSAModuleMSG):
+ 
+ 
+ @SA_MODULES.register_module()
+-class PAConvCUDASAModuleMSG(BasePointSAModule):
++class PAConvMUSASAModuleMSG(BasePointSAModule):
+     r"""Point set abstraction module with multi-scale grouping (MSG) used in
+     PAConv networks.
+ 
+-    Replace the non CUDA version PAConv with CUDA implemented PAConv for
++    Replace the non MUSA version PAConv with MUSA implemented PAConv for
+     efficient computation. See the `paper <https://arxiv.org/abs/2103.14635>`_
+     for more details.
+     """
+@@ -181,7 +181,7 @@ class PAConvCUDASAModuleMSG(BasePointSAModule):
+                      score_norm='softmax',
+                      temp_factor=1.0,
+                      last_bn=False)):
+-        super(PAConvCUDASAModuleMSG, self).__init__(
++        super(PAConvMUSASAModuleMSG, self).__init__(
+             num_point=num_point,
+             radii=radii,
+             sample_nums=sample_nums,
+@@ -203,7 +203,7 @@ class PAConvCUDASAModuleMSG(BasePointSAModule):
+         # in PAConv, bias only exists in ScoreNet
+         scorenet_cfg['bias'] = bias
+ 
+-        # we need to manually concat xyz for CUDA implemented PAConv
++        # we need to manually concat xyz for MUSA implemented PAConv
+         self.use_xyz = use_xyz
+ 
+         for i in range(len(self.mlp_channels)):
+@@ -213,12 +213,12 @@ class PAConvCUDASAModuleMSG(BasePointSAModule):
+ 
+             num_kernels = paconv_num_kernels[i]
+ 
+-            # can't use `nn.Sequential` for PAConvCUDA because its input and
++            # can't use `nn.Sequential` for PAConvMUSA because its input and
+             # output have different shapes
+             mlp = nn.ModuleList()
+             for i in range(len(mlp_channel) - 1):
+                 mlp.append(
+-                    PAConvCUDA(
++                    PAConvMUSA(
+                         mlp_channel[i],
+                         mlp_channel[i + 1],
+                         num_kernels[i],
+@@ -279,8 +279,8 @@ class PAConvCUDASAModuleMSG(BasePointSAModule):
+                 grouped_new_features = self.mlps[i][j](
+                     (new_features, grouped_xyz, grouped_idx.long()))[0]
+ 
+-                # different from PointNet++ and non CUDA version of PAConv
+-                # CUDA version of PAConv needs to aggregate local features
++                # different from PointNet++ and non MUSA version of PAConv
++                # MUSA version of PAConv needs to aggregate local features
+                 # every time after it passes through a Conv layer
+                 # in order to transform to valid input shape
+                 # (B, out_c, num_point)
+@@ -297,11 +297,11 @@ class PAConvCUDASAModuleMSG(BasePointSAModule):
+ 
+ 
+ @SA_MODULES.register_module()
+-class PAConvCUDASAModule(PAConvCUDASAModuleMSG):
++class PAConvMUSASAModule(PAConvMUSASAModuleMSG):
+     r"""Point set abstraction module with single-scale grouping (SSG) used in
+     PAConv networks.
+ 
+-    Replace the non CUDA version PAConv with CUDA implemented PAConv for
++    Replace the non MUSA version PAConv with MUSA implemented PAConv for
+     efficient computation. See the `paper <https://arxiv.org/abs/2103.14635>`_
+     for more details.
+     """
+@@ -325,7 +325,7 @@ class PAConvCUDASAModule(PAConvCUDASAModuleMSG):
+                      score_norm='softmax',
+                      temp_factor=1.0,
+                      last_bn=False)):
+-        super(PAConvCUDASAModule, self).__init__(
++        super(PAConvMUSASAModule, self).__init__(
+             mlp_channels=[mlp_channels],
+             paconv_num_kernels=[paconv_num_kernels],
+             num_point=num_point,
+diff --git a/requirements/runtime.txt b/requirements/runtime.txt
+index 643cb0cd..d4dd5fda 100644
+--- a/requirements/runtime.txt
++++ b/requirements/runtime.txt
+@@ -1,6 +1,6 @@
+ lyft_dataset_sdk
+ networkx>=2.2,<2.3
+-numba==0.53.0
++numba==0.59.0
+ numpy
+ nuscenes-devkit
+ plyfile

@@ -1,0 +1,900 @@
+diff --git a/cuda-porting.py b/cuda-porting.py
+new file mode 100644
+index 00000000..a6b685f7
+--- /dev/null
++++ b/cuda-porting.py
+@@ -0,0 +1,20 @@
++from torch_musa.utils.simple_porting import SimplePorting
++SimplePorting(cuda_dir_path="./mmcv/ops/csrc", ignore_dir_paths=[
++            "./mmcv/ops/csrc/parrots",
++            "./mmcv/ops/csrc/onnxruntime",
++            ],
++            mapping_rule={
++            "_CU_H_": "_MU_H_",
++            "_CUH": "_MUH",
++            "__NVCC__": "__MUSACC__",
++            "MMCV_WITH_CUDA": "MMCV_WITH_MUSA",
++            "AT_DISPATCH_FLOATING_TYPES_AND_HALF": "AT_DISPATCH_FLOATING_TYPES",
++            "#include <ATen/cuda/CUDAContext.h>": "#include \"torch_musa/csrc/aten/musa/MUSAContext.h\"",
++            "#include <c10/cuda/CUDAGuard.h>": "#include \"torch_musa/csrc/core/MUSAGuard.h\"",
++            "::cuda::": "::musa::",
++            "/cuda/": "/musa/",
++            ", CUDA,": ", PrivateUse1,",
++            ".cuh": ".muh",
++            ".is_cuda()": ".is_privateuseone()",
++            }
++            ).run()
+\ No newline at end of file
+diff --git a/mmcv/ops/carafe.py b/mmcv/ops/carafe.py
+index a13389b2..4c2dc3b2 100644
+--- a/mmcv/ops/carafe.py
++++ b/mmcv/ops/carafe.py
+@@ -57,7 +57,7 @@ class CARAFENaiveFunction(Function):
+ 
+     @staticmethod
+     def backward(ctx, grad_output):
+-        assert grad_output.is_cuda
++        assert grad_output.is_musa
+ 
+         features, masks = ctx.saved_tensors
+         kernel_size = ctx.kernel_size
+@@ -147,7 +147,7 @@ class CARAFEFunction(Function):
+ 
+     @staticmethod
+     def backward(ctx, grad_output):
+-        assert grad_output.is_cuda
++        assert grad_output.is_musa
+ 
+         features, masks, rfeatures = ctx.saved_tensors
+         kernel_size = ctx.kernel_size
+diff --git a/mmcv/ops/focal_loss.py b/mmcv/ops/focal_loss.py
+index f04a4cd0..03ad9e19 100644
+--- a/mmcv/ops/focal_loss.py
++++ b/mmcv/ops/focal_loss.py
+@@ -35,7 +35,7 @@ class SigmoidFocalLossFunction(Function):
+                 reduction='mean'):
+ 
+         assert isinstance(
+-            target, (torch.Tensor, torch.LongTensor, torch.cuda.LongTensor))
++            target, (torch.Tensor, torch.LongTensor, torch.musa.LongTensor))
+         assert input.dim() == 2
+         assert target.dim() == 1
+         assert input.size(0) == target.size(0)
+@@ -129,7 +129,7 @@ class SoftmaxFocalLossFunction(Function):
+                 weight=None,
+                 reduction='mean'):
+ 
+-        assert isinstance(target, (torch.LongTensor, torch.cuda.LongTensor))
++        assert isinstance(target, (torch.LongTensor, torch.musa.LongTensor))
+         assert input.dim() == 2
+         assert target.dim() == 1
+         assert input.size(0) == target.size(0)
+diff --git a/mmcv/ops/furthest_point_sample.py b/mmcv/ops/furthest_point_sample.py
+index 22b1a304..5f9a8c74 100644
+--- a/mmcv/ops/furthest_point_sample.py
++++ b/mmcv/ops/furthest_point_sample.py
+@@ -27,8 +27,8 @@ class FurthestPointSampling(Function):
+         assert points_xyz.is_contiguous()
+ 
+         B, N = points_xyz.size()[:2]
+-        output = torch.cuda.IntTensor(B, num_points)
+-        temp = torch.cuda.FloatTensor(B, N).fill_(1e10)
++        output = torch.musa.IntTensor(B, num_points)
++        temp = torch.musa.FloatTensor(B, N).fill_(1e10)
+ 
+         ext_module.furthest_point_sampling_forward(
+             points_xyz,
+diff --git a/mmcv/ops/fused_bias_leakyrelu.py b/mmcv/ops/fused_bias_leakyrelu.py
+index ee0b9ea6..f44b9a2a 100644
+--- a/mmcv/ops/fused_bias_leakyrelu.py
++++ b/mmcv/ops/fused_bias_leakyrelu.py
+@@ -249,7 +249,7 @@ def fused_bias_leakyrelu(input, bias, negative_slope=0.2, scale=2**0.5):
+         torch.Tensor: Feature map after non-linear activation.
+     """
+ 
+-    if not input.is_cuda:
++    if not input.is_musa:
+         return bias_leakyrelu_ref(input, bias, negative_slope, scale)
+ 
+     return FusedBiasLeakyReLUFunction.apply(input, bias.to(input.dtype),
+diff --git a/mmcv/ops/group_points.py b/mmcv/ops/group_points.py
+index 80c7d294..73dbb1a9 100644
+--- a/mmcv/ops/group_points.py
++++ b/mmcv/ops/group_points.py
+@@ -194,7 +194,7 @@ class GroupingOperation(Function):
+ 
+         B, nfeatures, nsample = indices.size()
+         _, C, N = features.size()
+-        output = torch.cuda.FloatTensor(B, C, nfeatures, nsample)
++        output = torch.musa.FloatTensor(B, C, nfeatures, nsample)
+ 
+         ext_module.group_points_forward(
+             features,
+@@ -223,7 +223,7 @@ class GroupingOperation(Function):
+         idx, N = ctx.for_backwards
+ 
+         B, C, npoint, nsample = grad_out.size()
+-        grad_features = torch.cuda.FloatTensor(B, C, N).zero_()
++        grad_features = torch.musa.FloatTensor(B, C, N).zero_()
+ 
+         grad_out_data = grad_out.data.contiguous()
+         ext_module.group_points_backward(
+diff --git a/mmcv/ops/info.py b/mmcv/ops/info.py
+index 29f2e559..bd65a26b 100644
+--- a/mmcv/ops/info.py
++++ b/mmcv/ops/info.py
+@@ -11,7 +11,7 @@ if torch.__version__ == 'parrots':
+         return 'GCC ' + parrots.version.compiler
+ 
+     def get_compiling_cuda_version():
+-        return parrots.version.cuda
++        return parrots.version.musa
+ else:
+     from ..utils import ext_loader
+     ext_module = ext_loader.load_ext(
+diff --git a/mmcv/ops/iou3d.py b/mmcv/ops/iou3d.py
+index 4a120df4..9a9c4efc 100755
+--- a/mmcv/ops/iou3d.py
++++ b/mmcv/ops/iou3d.py
+@@ -50,7 +50,7 @@ def nms3d(boxes, scores, iou_threshold):
+     num_out = torch.zeros(size=(), dtype=torch.long)
+     ext_module.iou3d_nms3d_forward(
+         boxes, keep, num_out, nms_overlap_thresh=iou_threshold)
+-    keep = order[keep[:num_out].cuda(boxes.device)].contiguous()
++    keep = order[keep[:num_out].musa(boxes.device)].contiguous()
+     return keep
+ 
+ 
+@@ -76,7 +76,7 @@ def nms3d_normal(boxes, scores, iou_threshold):
+     num_out = torch.zeros(size=(), dtype=torch.long)
+     ext_module.iou3d_nms3d_normal_forward(
+         boxes, keep, num_out, nms_overlap_thresh=iou_threshold)
+-    return order[keep[:num_out].cuda(boxes.device)].contiguous()
++    return order[keep[:num_out].musa(boxes.device)].contiguous()
+ 
+ 
+ def _xyxyr2xywhr(boxes):
+diff --git a/mmcv/ops/knn.py b/mmcv/ops/knn.py
+index ad81c52d..a1dbc702 100644
+--- a/mmcv/ops/knn.py
++++ b/mmcv/ops/knn.py
+@@ -7,7 +7,7 @@ ext_module = ext_loader.load_ext('_ext', ['knn_forward'])
+ 
+ 
+ class KNN(Function):
+-    r"""KNN (CUDA) based on heap data structure.
++    r"""KNN (MUSA) based on heap data structure.
+ 
+     Modified from `PAConv <https://github.com/CVMI-Lab/PAConv/tree/main/
+     scene_seg/lib/pointops/src/knnquery_heap>`_.
+@@ -53,8 +53,8 @@ class KNN(Function):
+         center_xyz_device = center_xyz.get_device()
+         assert center_xyz_device == xyz.get_device(), \
+             'center_xyz and xyz should be put on the same device'
+-        if torch.cuda.current_device() != center_xyz_device:
+-            torch.cuda.set_device(center_xyz_device)
++        if torch.musa.current_device() != center_xyz_device:
++            torch.musa.set_device(center_xyz_device)
+ 
+         B, npoint, _ = center_xyz.shape
+         N = xyz.shape[1]
+diff --git a/mmcv/ops/multi_scale_deform_attn.py b/mmcv/ops/multi_scale_deform_attn.py
+index eb34aadf..2aecfcca 100644
+--- a/mmcv/ops/multi_scale_deform_attn.py
++++ b/mmcv/ops/multi_scale_deform_attn.py
+@@ -197,7 +197,7 @@ class MultiScaleDeformableAttention(BaseModule):
+         self.batch_first = batch_first
+ 
+         # you'd better set dim_per_head to a power of 2
+-        # which is more efficient in the CUDA implementation
++        # which is more efficient in the MUSA implementation
+         def _is_power_of_2(n):
+             if (not isinstance(n, int)) or (n < 0):
+                 raise ValueError(
+@@ -210,7 +210,7 @@ class MultiScaleDeformableAttention(BaseModule):
+                 "You'd better set embed_dims in "
+                 'MultiScaleDeformAttention to make '
+                 'the dimension of each attention head a power of 2 '
+-                'which is more efficient in our CUDA implementation.')
++                'which is more efficient in our MUSA implementation.')
+ 
+         self.im2col_step = im2col_step
+         self.embed_dims = embed_dims
+@@ -340,7 +340,7 @@ class MultiScaleDeformableAttention(BaseModule):
+             raise ValueError(
+                 f'Last dim of reference_points must be'
+                 f' 2 or 4, but get {reference_points.shape[-1]} instead.')
+-        if torch.cuda.is_available() and value.is_cuda:
++        if torch.musa.is_available() and value.is_musa:
+             output = MultiScaleDeformableAttnFunction.apply(
+                 value, spatial_shapes, level_start_index, sampling_locations,
+                 attention_weights, self.im2col_step)
+diff --git a/mmcv/ops/points_in_boxes.py b/mmcv/ops/points_in_boxes.py
+index 737179a1..c7a48389 100644
+--- a/mmcv/ops/points_in_boxes.py
++++ b/mmcv/ops/points_in_boxes.py
+@@ -9,7 +9,7 @@ ext_module = ext_loader.load_ext('_ext', [
+ 
+ 
+ def points_in_boxes_part(points, boxes):
+-    """Find the box in which each point is (CUDA).
++    """Find the box in which each point is (MUSA).
+ 
+     Args:
+         points (torch.Tensor): [B, M, 3], [x, y, z] in LiDAR/DEPTH coordinate.
+@@ -37,7 +37,7 @@ def points_in_boxes_part(points, boxes):
+ 
+     # If manually put the tensor 'points' or 'boxes' on a device
+     # which is not the current device, some temporary variables
+-    # will be created on the current device in the cuda op,
++    # will be created on the current device in the musa op,
+     # and the output will be incorrect.
+     # Therefore, we force the current device to be the same
+     # as the device of the tensors if it was not.
+@@ -46,8 +46,8 @@ def points_in_boxes_part(points, boxes):
+     points_device = points.get_device()
+     assert points_device == boxes.get_device(), \
+         'Points and boxes should be put on the same device'
+-    if torch.cuda.current_device() != points_device:
+-        torch.cuda.set_device(points_device)
++    if torch.musa.current_device() != points_device:
++        torch.musa.set_device(points_device)
+ 
+     ext_module.points_in_boxes_part_forward(boxes.contiguous(),
+                                             points.contiguous(),
+@@ -95,7 +95,7 @@ def points_in_boxes_cpu(points, boxes):
+ 
+ 
+ def points_in_boxes_all(points, boxes):
+-    """Find all boxes in which each point is (CUDA).
++    """Find all boxes in which each point is (MUSA).
+ 
+     Args:
+         points (torch.Tensor): [B, M, 3], [x, y, z] in LiDAR/DEPTH coordinate
+@@ -126,8 +126,8 @@ def points_in_boxes_all(points, boxes):
+     points_device = points.get_device()
+     assert points_device == boxes.get_device(), \
+         'Points and boxes should be put on the same device'
+-    if torch.cuda.current_device() != points_device:
+-        torch.cuda.set_device(points_device)
++    if torch.musa.current_device() != points_device:
++        torch.musa.set_device(points_device)
+ 
+     ext_module.points_in_boxes_all_forward(boxes.contiguous(),
+                                            points.contiguous(),
+diff --git a/mmcv/ops/points_in_polygons.py b/mmcv/ops/points_in_polygons.py
+index 1bfceb09..0f2f7c1e 100644
+--- a/mmcv/ops/points_in_polygons.py
++++ b/mmcv/ops/points_in_polygons.py
+@@ -31,7 +31,7 @@ def points_in_polygons(points, polygons):
+         'polygons dimension should be 8, ' \
+         f'but got unexpected shape {polygons.shape[1]}'
+     output = torch.full([points.shape[0], polygons.shape[0]],
+-                        0.).cuda().float()
++                        0.).musa().float()
+     ext_module.points_in_polygons_forward(points.contiguous(),
+                                           polygons.contiguous(), output)
+     return output
+diff --git a/mmcv/ops/sync_bn.py b/mmcv/ops/sync_bn.py
+index e24ecb1a..8731a9f0 100644
+--- a/mmcv/ops/sync_bn.py
++++ b/mmcv/ops/sync_bn.py
+@@ -45,7 +45,7 @@ class SyncBatchNormFunction(Function):
+ 
+         assert isinstance(
+                    input, (torch.HalfTensor, torch.FloatTensor,
+-                           torch.cuda.HalfTensor, torch.cuda.FloatTensor)), \
++                           torch.musa.HalfTensor, torch.musa.FloatTensor)), \
+                f'only support Half or Float Tensor, but {input.type()}'
+         output = torch.zeros_like(input)
+         input3d = input.flatten(start_dim=2)
+diff --git a/mmcv/ops/three_interpolate.py b/mmcv/ops/three_interpolate.py
+index 7256e91f..439504d9 100644
+--- a/mmcv/ops/three_interpolate.py
++++ b/mmcv/ops/three_interpolate.py
+@@ -38,7 +38,7 @@ class ThreeInterpolate(Function):
+         B, c, m = features.size()
+         n = indices.size(1)
+         ctx.three_interpolate_for_backward = (indices, weight, m)
+-        output = torch.cuda.FloatTensor(B, c, n)
++        output = torch.musa.FloatTensor(B, c, n)
+ 
+         ext_module.three_interpolate_forward(
+             features, indices, weight, output, b=B, c=c, m=m, n=n)
+@@ -58,7 +58,7 @@ class ThreeInterpolate(Function):
+         idx, weight, m = ctx.three_interpolate_for_backward
+         B, c, n = grad_out.size()
+ 
+-        grad_features = torch.cuda.FloatTensor(B, c, m).zero_()
++        grad_features = torch.musa.FloatTensor(B, c, m).zero_()
+         grad_out_data = grad_out.data.contiguous()
+ 
+         ext_module.three_interpolate_backward(
+diff --git a/mmcv/ops/three_nn.py b/mmcv/ops/three_nn.py
+index 25d60bb2..d4673590 100644
+--- a/mmcv/ops/three_nn.py
++++ b/mmcv/ops/three_nn.py
+@@ -34,8 +34,8 @@ class ThreeNN(Function):
+ 
+         B, N, _ = target.size()
+         m = source.size(1)
+-        dist2 = torch.cuda.FloatTensor(B, N, 3)
+-        idx = torch.cuda.IntTensor(B, N, 3)
++        dist2 = torch.musa.FloatTensor(B, N, 3)
++        idx = torch.musa.IntTensor(B, N, 3)
+ 
+         ext_module.three_nn_forward(target, source, dist2, idx, b=B, n=N, m=m)
+         if torch.__version__ != 'parrots':
+diff --git a/mmcv/parallel/_functions.py b/mmcv/parallel/_functions.py
+index 95c58bf1..6f81ed63 100644
+--- a/mmcv/parallel/_functions.py
++++ b/mmcv/parallel/_functions.py
+@@ -20,8 +20,8 @@ def scatter(input, devices, streams=None):
+         # TODO: copy to a pinned buffer first (if copying from CPU)
+         stream = streams[0] if output.numel() > 0 else None
+         if devices != [-1]:
+-            with torch.cuda.device(devices[0]), torch.cuda.stream(stream):
+-                output = output.cuda(devices[0], non_blocking=True)
++            with torch.musa.device(devices[0]), torch.musa.stream(stream):
++                output = output.musa(devices[0], non_blocking=True)
+ 
+         return output
+     else:
+@@ -37,8 +37,8 @@ def synchronize_stream(output, devices, streams):
+                                    [streams[i]])
+     elif isinstance(output, torch.Tensor):
+         if output.numel() != 0:
+-            with torch.cuda.device(devices[0]):
+-                main_stream = torch.cuda.current_stream()
++            with torch.musa.device(devices[0]):
++                main_stream = torch.musa.current_stream()
+                 main_stream.wait_stream(streams[0])
+                 output.record_stream(main_stream)
+     else:
+@@ -53,7 +53,7 @@ def get_input_device(input):
+                 return input_device
+         return -1
+     elif isinstance(input, torch.Tensor):
+-        return input.get_device() if input.is_cuda else -1
++        return input.get_device() if input.is_musa else -1
+     else:
+         raise Exception(f'Unknown type {type(input)}.')
+ 
+@@ -66,7 +66,7 @@ class Scatter:
+         streams = None
+         if input_device == -1 and target_gpus != [-1]:
+             # Perform CPU to GPU copies in a background stream
+-            streams = [_get_stream(device) for device in target_gpus]
++            streams = [_get_stream( torch.device('musa',device) ) for device in target_gpus]
+ 
+         outputs = scatter(input, target_gpus, streams)
+         # Synchronize with the copy stream
+diff --git a/mmcv/parallel/distributed_deprecated.py b/mmcv/parallel/distributed_deprecated.py
+index d438b58b..0e53171f 100644
+--- a/mmcv/parallel/distributed_deprecated.py
++++ b/mmcv/parallel/distributed_deprecated.py
+@@ -54,17 +54,17 @@ class MMDistributedDataParallel(nn.Module):
+ 
+     def forward(self, *inputs, **kwargs):
+         inputs, kwargs = self.scatter(inputs, kwargs,
+-                                      [torch.cuda.current_device()])
++                                      [torch.musa.current_device()])
+         return self.module(*inputs[0], **kwargs[0])
+ 
+     def train_step(self, *inputs, **kwargs):
+         inputs, kwargs = self.scatter(inputs, kwargs,
+-                                      [torch.cuda.current_device()])
++                                      [torch.musa.current_device()])
+         output = self.module.train_step(*inputs[0], **kwargs[0])
+         return output
+ 
+     def val_step(self, *inputs, **kwargs):
+         inputs, kwargs = self.scatter(inputs, kwargs,
+-                                      [torch.cuda.current_device()])
++                                      [torch.musa.current_device()])
+         output = self.module.val_step(*inputs[0], **kwargs[0])
+         return output
+diff --git a/mmcv/runner/base_runner.py b/mmcv/runner/base_runner.py
+index 12a0025f..09f0e899 100644
+--- a/mmcv/runner/base_runner.py
++++ b/mmcv/runner/base_runner.py
+@@ -349,11 +349,11 @@ class BaseRunner(metaclass=ABCMeta):
+                resume_optimizer=True,
+                map_location='default'):
+         if map_location == 'default':
+-            if torch.cuda.is_available():
+-                device_id = torch.cuda.current_device()
++            if torch.musa.is_available():
++                device_id = torch.musa.current_device()
+                 checkpoint = self.load_checkpoint(
+                     checkpoint,
+-                    map_location=lambda storage, loc: storage.cuda(device_id))
++                    map_location=lambda storage, loc: storage.musa(device_id))
+             else:
+                 checkpoint = self.load_checkpoint(checkpoint)
+         else:
+diff --git a/mmcv/runner/dist_utils.py b/mmcv/runner/dist_utils.py
+index 26d77a8f..1b93a79d 100644
+--- a/mmcv/runner/dist_utils.py
++++ b/mmcv/runner/dist_utils.py
+@@ -33,7 +33,7 @@ def _is_free_port(port):
+         return all(s.connect_ex((ip, port)) != 0 for ip in ips)
+ 
+ 
+-def init_dist(launcher, backend='nccl', **kwargs):
++def init_dist(launcher, backend='mccl', **kwargs):
+     if mp.get_start_method(allow_none=True) is None:
+         mp.set_start_method('spawn')
+     if launcher == 'pytorch':
+@@ -58,14 +58,14 @@ def _init_dist_pytorch(backend, **kwargs):
+             world_size=int(os.environ['WORLD_SIZE']),
+             **kwargs)
+     else:
+-        num_gpus = torch.cuda.device_count()
+-        torch.cuda.set_device(rank % num_gpus)
++        num_gpus = torch.musa.device_count()
++        torch.musa.set_device(rank % num_gpus)
+         dist.init_process_group(backend=backend, **kwargs)
+ 
+ 
+ def _init_dist_mpi(backend, **kwargs):
+     local_rank = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
+-    torch.cuda.set_device(local_rank)
++    torch.musa.set_device(local_rank)
+     if 'MASTER_PORT' not in os.environ:
+         # 29500 is torch.distributed default port
+         os.environ['MASTER_PORT'] = '29500'
+@@ -90,8 +90,8 @@ def _init_dist_slurm(backend, port=None):
+     proc_id = int(os.environ['SLURM_PROCID'])
+     ntasks = int(os.environ['SLURM_NTASKS'])
+     node_list = os.environ['SLURM_NODELIST']
+-    num_gpus = torch.cuda.device_count()
+-    torch.cuda.set_device(proc_id % num_gpus)
++    num_gpus = torch.musa.device_count()
++    torch.musa.set_device(proc_id % num_gpus)
+     addr = subprocess.getoutput(
+         f'scontrol show hostname {node_list} | head -n1')
+     # specify master port
+diff --git a/mmcv/runner/fp16_utils.py b/mmcv/runner/fp16_utils.py
+index be3ac3a3..bb72df4f 100644
+--- a/mmcv/runner/fp16_utils.py
++++ b/mmcv/runner/fp16_utils.py
+@@ -12,11 +12,11 @@ from mmcv.utils import TORCH_VERSION, digit_version
+ from .dist_utils import allreduce_grads as _allreduce_grads
+ 
+ try:
+-    # If PyTorch version >= 1.6.0, torch.cuda.amp.autocast would be imported
++    # If PyTorch version >= 1.6.0, torch.musa.amp.autocast would be imported
+     # and used; otherwise, auto fp16 will adopt mmcv's implementation.
+     # Note that when PyTorch >= 1.6.0, we still cast tensor types to fp16
+     # manually, so the behavior may not be consistent with real amp.
+-    from torch.cuda.amp import autocast
++    from torch_musa.core.amp import autocast
+ except ImportError:
+     pass
+ 
+@@ -69,7 +69,7 @@ def auto_fp16(apply_to=None, out_fp32=False, supported_types=(nn.Module, )):
+     This decorator is useful when you write custom modules and want to support
+     mixed precision training. If inputs arguments are fp32 tensors, they will
+     be converted to fp16 automatically. Arguments other than fp32 tensors are
+-    ignored. If you are using PyTorch >= 1.6, torch.cuda.amp is used as the
++    ignored. If you are using PyTorch >= 1.6, torch.musa.amp is used as the
+     backend, otherwise, original mmcv implementation will be adopted.
+ 
+     Args:
+@@ -158,7 +158,7 @@ def force_fp32(apply_to=None, out_fp16=False):
+     in fp32 mode, then this decorator can handle it. If inputs arguments are
+     fp16 tensors, they will be converted to fp32 automatically. Arguments other
+     than fp16 tensors are ignored. If you are using PyTorch >= 1.6,
+-    torch.cuda.amp is used as the backend, otherwise, original mmcv
++    torch.musa.amp is used as the backend, otherwise, original mmcv
+     implementation will be adopted.
+ 
+     Args:
+@@ -247,7 +247,7 @@ def allreduce_grads(params, coalesce=True, bucket_size_mb=-1):
+ def wrap_fp16_model(model):
+     """Wrap the FP32 model to FP16.
+ 
+-    If you are using PyTorch >= 1.6, torch.cuda.amp is used as the
++    If you are using PyTorch >= 1.6, torch.musa.amp is used as the
+     backend, otherwise, original mmcv implementation will be adopted.
+ 
+     For PyTorch >= 1.6, this function will
+diff --git a/mmcv/runner/hooks/logger/text.py b/mmcv/runner/hooks/logger/text.py
+index adf07320..6db95cf5 100644
+--- a/mmcv/runner/hooks/logger/text.py
++++ b/mmcv/runner/hooks/logger/text.py
+@@ -107,7 +107,7 @@ class TextLoggerHook(LoggerHook):
+ 
+     def _get_max_memory(self, runner):
+         device = getattr(runner.model, 'output_device', None)
+-        mem = torch.cuda.max_memory_allocated(device=device)
++        mem = torch.musa.max_memory_allocated(device=device)
+         mem_mb = torch.tensor([int(mem) // (1024 * 1024)],
+                               dtype=torch.int,
+                               device=device)
+@@ -152,7 +152,7 @@ class TextLoggerHook(LoggerHook):
+                 log_str += f'time: {log_dict["time"]:.3f}, ' \
+                            f'data_time: {log_dict["data_time"]:.3f}, '
+                 # statistic memory
+-                if torch.cuda.is_available():
++                if torch.musa.is_available():
+                     log_str += f'memory: {log_dict["memory"]}, '
+         else:
+             # val/test time
+@@ -225,7 +225,7 @@ class TextLoggerHook(LoggerHook):
+ 
+         if 'time' in runner.log_buffer.output:
+             # statistic memory
+-            if torch.cuda.is_available():
++            if torch.musa.is_available():
+                 log_dict['memory'] = self._get_max_memory(runner)
+ 
+         log_dict = dict(log_dict, **runner.log_buffer.output)
+diff --git a/mmcv/runner/hooks/memory.py b/mmcv/runner/hooks/memory.py
+index 70cf9a83..71753bd5 100644
+--- a/mmcv/runner/hooks/memory.py
++++ b/mmcv/runner/hooks/memory.py
+@@ -14,12 +14,12 @@ class EmptyCacheHook(Hook):
+ 
+     def after_iter(self, runner):
+         if self._after_iter:
+-            torch.cuda.empty_cache()
++            torch.musa.empty_cache()
+ 
+     def before_epoch(self, runner):
+         if self._before_epoch:
+-            torch.cuda.empty_cache()
++            torch.musa.empty_cache()
+ 
+     def after_epoch(self, runner):
+         if self._after_epoch:
+-            torch.cuda.empty_cache()
++            torch.musa.empty_cache()
+diff --git a/mmcv/runner/hooks/optimizer.py b/mmcv/runner/hooks/optimizer.py
+index a5c10988..830cb1b8 100644
+--- a/mmcv/runner/hooks/optimizer.py
++++ b/mmcv/runner/hooks/optimizer.py
+@@ -14,7 +14,7 @@ from .hook import HOOKS, Hook
+ try:
+     # If PyTorch version >= 1.6.0, torch.cuda.amp.GradScaler would be imported
+     # and used; otherwise, auto fp16 will adopt mmcv's implementation.
+-    from torch.cuda.amp import GradScaler
++    from torch_musa.core.amp import GradScaler
+ except ImportError:
+     pass
+ 
+diff --git a/mmcv/runner/hooks/profiler.py b/mmcv/runner/hooks/profiler.py
+index fef9adc1..c6023460 100644
+--- a/mmcv/runner/hooks/profiler.py
++++ b/mmcv/runner/hooks/profiler.py
+@@ -24,8 +24,8 @@ class ProfilerHook(Hook):
+             first profile_iters epochs at the beginning of the
+             training, otherwise it indicates the first profile_iters
+             iterations. Default: 1.
+-        activities (list[str]): List of activity groups (CPU, CUDA) to use in
+-            profiling. Default: ['cpu', 'cuda'].
++        activities (list[str]): List of activity groups (CPU, MUSA) to use in
++            profiling. Default: ['cpu', 'musa'].
+         schedule (dict, optional): Config of generating the callable schedule.
+             if schedule is None, profiler will not add step markers into the
+             trace and table view. Default: None.
+@@ -55,7 +55,7 @@ class ProfilerHook(Hook):
+     def __init__(self,
+                  by_epoch: bool = True,
+                  profile_iters: int = 1,
+-                 activities: List[str] = ['cpu', 'cuda'],
++                 activities: List[str] = ['cpu', 'musa'],
+                  schedule: Optional[dict] = None,
+                  on_trace_ready: Optional[Union[Callable, dict]] = None,
+                  record_shapes: bool = False,
+@@ -85,11 +85,11 @@ class ProfilerHook(Hook):
+             activity = activity.lower()
+             if activity == 'cpu':
+                 self.activities.append(profiler.ProfilerActivity.CPU)
+-            elif activity == 'cuda':
+-                self.activities.append(profiler.ProfilerActivity.CUDA)
++            elif activity == 'musa':
++                self.activities.append(profiler.ProfilerActivity.MUSA)
+             else:
+                 raise ValueError(
+-                    f'activity should be "cpu" or "cuda", but got {activity}')
++                    f'activity should be "cpu" or "musa", but got {activity}')
+ 
+         if schedule is not None:
+             self.schedule = profiler.schedule(**schedule)
+diff --git a/mmcv/runner/iter_based_runner.py b/mmcv/runner/iter_based_runner.py
+index 2de7317b..b24f1653 100644
+--- a/mmcv/runner/iter_based_runner.py
++++ b/mmcv/runner/iter_based_runner.py
+@@ -155,10 +155,10 @@ class IterBasedRunner(BaseRunner):
+                 Default to 'default'.
+         """
+         if map_location == 'default':
+-            device_id = torch.cuda.current_device()
++            device_id = torch.musa.current_device()
+             checkpoint = self.load_checkpoint(
+                 checkpoint,
+-                map_location=lambda storage, loc: storage.cuda(device_id))
++                map_location=lambda storage, loc: storage.musa(device_id))
+         else:
+             checkpoint = self.load_checkpoint(
+                 checkpoint, map_location=map_location)
+diff --git a/mmcv/runner/utils.py b/mmcv/runner/utils.py
+index 144d11e1..98a8d7b7 100644
+--- a/mmcv/runner/utils.py
++++ b/mmcv/runner/utils.py
+@@ -85,8 +85,8 @@ def set_random_seed(seed, deterministic=False, use_rank_shift=False):
+     random.seed(seed)
+     np.random.seed(seed)
+     torch.manual_seed(seed)
+-    torch.cuda.manual_seed(seed)
+-    torch.cuda.manual_seed_all(seed)
++    torch.musa.manual_seed(seed)
++    torch.musa.manual_seed_all(seed)
+     os.environ['PYTHONHASHSEED'] = str(seed)
+     if deterministic:
+         torch.backends.cudnn.deterministic = True
+diff --git a/mmcv/utils/__init__.py b/mmcv/utils/__init__.py
+index e0825ed6..ebc426df 100644
+--- a/mmcv/utils/__init__.py
++++ b/mmcv/utils/__init__.py
+@@ -42,12 +42,12 @@ else:
+     from .logging import get_logger, print_log
+     from .parrots_jit import jit, skip_no_elena
+     # yapf: disable
+-    from .parrots_wrapper import (IS_CUDA_AVAILABLE, TORCH_VERSION,
+-                                  BuildExtension, CppExtension, CUDAExtension,
++    from .parrots_wrapper import (IS_MUSA_AVAILABLE, TORCH_VERSION,
++                                  BuildExtension, CppExtension, MUSAExtension,
+                                   DataLoader, PoolDataLoader, SyncBatchNorm,
+                                   _AdaptiveAvgPoolNd, _AdaptiveMaxPoolNd,
+                                   _AvgPoolNd, _BatchNorm, _ConvNd,
+-                                  _ConvTransposeMixin, _get_cuda_home,
++                                  _ConvTransposeMixin, _get_musa_home,
+                                   _InstanceNorm, _MaxPoolNd, get_build_config,
+                                   is_rocm_pytorch)
+     # yapf: enable
+@@ -65,7 +65,7 @@ else:
+         'build_from_cfg', 'Timer', 'TimerError', 'check_time', 'SyncBatchNorm',
+         '_AdaptiveAvgPoolNd', '_AdaptiveMaxPoolNd', '_AvgPoolNd', '_BatchNorm',
+         '_ConvNd', '_ConvTransposeMixin', '_InstanceNorm', '_MaxPoolNd',
+-        'get_build_config', 'BuildExtension', 'CppExtension', 'CUDAExtension',
++        'get_build_config', 'BuildExtension', 'CppExtension', 'MUSAExtension',
+         'DataLoader', 'PoolDataLoader', 'TORCH_VERSION',
+         'deprecated_api_warning', 'digit_version', 'get_git_hash',
+         'import_modules_from_strings', 'jit', 'skip_no_elena',
+@@ -73,6 +73,6 @@ else:
+         'assert_dict_has_keys', 'assert_keys_equal', 'assert_is_norm_layer',
+         'assert_params_all_zeros', 'check_python_script',
+         'is_method_overridden', 'is_jit_tracing', 'is_rocm_pytorch',
+-        '_get_cuda_home', 'load_url', 'has_method', 'IS_CUDA_AVAILABLE',
++        '_get_musa_home', 'load_url', 'has_method', 'IS_MUSA_AVAILABLE',
+         'worker_init_fn', 'IS_MLU_AVAILABLE', 'IS_IPU_AVAILABLE'
+     ]
+diff --git a/mmcv/utils/env.py b/mmcv/utils/env.py
+index 51133250..c2c01eaf 100644
+--- a/mmcv/utils/env.py
++++ b/mmcv/utils/env.py
+@@ -21,9 +21,9 @@ def collect_env():
+ 
+             - sys.platform: The variable of ``sys.platform``.
+             - Python: Python version.
+-            - CUDA available: Bool, indicating if CUDA is available.
++            - MUSA available: Bool, indicating if MUSA is available.
+             - GPU devices: Device type of each GPU.
+-            - CUDA_HOME (optional): The env var ``CUDA_HOME``.
++            - MUSA_HOME (optional): The env var ``MUSA_HOME``.
+             - NVCC (optional): NVCC version.
+             - GCC: GCC version, "n/a" if GCC is not installed.
+             - MSVC: Microsoft Virtual C++ Compiler version, Windows only.
+@@ -34,37 +34,37 @@ def collect_env():
+             - OpenCV: OpenCV version.
+             - MMCV: MMCV version.
+             - MMCV Compiler: The GCC version for compiling MMCV ops.
+-            - MMCV CUDA Compiler: The CUDA version for compiling MMCV ops.
++            - MMCV MUSA Compiler: The MUSA version for compiling MMCV ops.
+     """
+     env_info = {}
+     env_info['sys.platform'] = sys.platform
+     env_info['Python'] = sys.version.replace('\n', '')
+ 
+-    cuda_available = torch.cuda.is_available()
+-    env_info['CUDA available'] = cuda_available
++    musa_available = torch.musa.is_available()
++    env_info['MUSA available'] = musa_available
+ 
+-    if cuda_available:
++    if musa_available:
+         devices = defaultdict(list)
+-        for k in range(torch.cuda.device_count()):
+-            devices[torch.cuda.get_device_name(k)].append(str(k))
++        for k in range(torch.musa.device_count()):
++            devices[torch.musa.get_device_name(k)].append(str(k))
+         for name, device_ids in devices.items():
+             env_info['GPU ' + ','.join(device_ids)] = name
+ 
+-        from mmcv.utils.parrots_wrapper import _get_cuda_home
+-        CUDA_HOME = _get_cuda_home()
+-        env_info['CUDA_HOME'] = CUDA_HOME
++        from mmcv.utils.parrots_wrapper import _get_musa_home
++        MUSA_HOME = _get_musa_home()
++        env_info['MUSA_HOME'] = MUSA_HOME
+ 
+-        if CUDA_HOME is not None and osp.isdir(CUDA_HOME):
++        if MUSA_HOME is not None and osp.isdir(MUSA_HOME):
+             try:
+-                nvcc = osp.join(CUDA_HOME, 'bin/nvcc')
+-                nvcc = subprocess.check_output(f'"{nvcc}" -V', shell=True)
+-                nvcc = nvcc.decode('utf-8').strip()
+-                release = nvcc.rfind('Cuda compilation tools')
+-                build = nvcc.rfind('Build ')
+-                nvcc = nvcc[release:build].strip()
++                mcc = osp.join(MUSA_HOME, 'bin/mcc')
++                mcc = subprocess.check_output(f'"{mcc}" -V', shell=True)
++                mcc = mcc.decode('utf-8').strip()
++                release = mcc.rfind('Cuda compilation tools')
++                build = mcc.rfind('Build ')
++                mcc = mcc[release:build].strip()
+             except subprocess.SubprocessError:
+-                nvcc = 'Not Available'
+-            env_info['NVCC'] = nvcc
++                mcc = 'Not Available'
++            env_info['NVCC'] = mcc
+ 
+     try:
+         # Check C++ Compiler.
+@@ -112,9 +112,9 @@ def collect_env():
+         from mmcv.ops import get_compiler_version, get_compiling_cuda_version
+     except ModuleNotFoundError:
+         env_info['MMCV Compiler'] = 'n/a'
+-        env_info['MMCV CUDA Compiler'] = 'n/a'
++        env_info['MMCV MUSA Compiler'] = 'n/a'
+     else:
+         env_info['MMCV Compiler'] = get_compiler_version()
+-        env_info['MMCV CUDA Compiler'] = get_compiling_cuda_version()
++        env_info['MMCV MUSA Compiler'] = get_compiling_cuda_version()
+ 
+     return env_info
+diff --git a/mmcv/utils/parrots_wrapper.py b/mmcv/utils/parrots_wrapper.py
+index cf2c7e5c..8db5d8b9 100644
+--- a/mmcv/utils/parrots_wrapper.py
++++ b/mmcv/utils/parrots_wrapper.py
+@@ -6,18 +6,18 @@ import torch
+ TORCH_VERSION = torch.__version__
+ 
+ 
+-def is_cuda_available() -> bool:
+-    return torch.cuda.is_available()
++def is_musa_available() -> bool:
++    return torch.musa.is_available()
+ 
+ 
+-IS_CUDA_AVAILABLE = is_cuda_available()
++IS_MUSA_AVAILABLE = is_musa_available()
+ 
+ 
+ def is_rocm_pytorch() -> bool:
+     is_rocm = False
+     if TORCH_VERSION != 'parrots':
+         try:
+-            from torch.utils.cpp_extension import ROCM_HOME
++            from torch_musa.utils.musa_extension import ROCM_HOME
+             is_rocm = True if ((torch.version.hip is not None) and
+                                (ROCM_HOME is not None)) else False
+         except ImportError:
+@@ -25,16 +25,16 @@ def is_rocm_pytorch() -> bool:
+     return is_rocm
+ 
+ 
+-def _get_cuda_home():
++def _get_musa_home():
+     if TORCH_VERSION == 'parrots':
+-        from parrots.utils.build_extension import CUDA_HOME
++        from parrots.utils.build_extension import MUSA_HOME
+     else:
+         if is_rocm_pytorch():
+-            from torch.utils.cpp_extension import ROCM_HOME
+-            CUDA_HOME = ROCM_HOME
++            from torch_musa.utils.musa_extension import ROCM_HOME
++            MUSA_HOME = ROCM_HOME
+         else:
+-            from torch.utils.cpp_extension import CUDA_HOME
+-    return CUDA_HOME
++            from torch_musa.utils.musa_extension import MUSA_HOME
++    return MUSA_HOME
+ 
+ 
+ def get_build_config():
+@@ -65,12 +65,12 @@ def _get_dataloader():
+ def _get_extension():
+     if TORCH_VERSION == 'parrots':
+         from parrots.utils.build_extension import BuildExtension, Extension
+-        CppExtension = partial(Extension, cuda=False)
+-        CUDAExtension = partial(Extension, cuda=True)
++        CppExtension = partial(Extension, musa=False)
++        MUSAExtension = partial(Extension, musa=True)
+     else:
+-        from torch.utils.cpp_extension import (BuildExtension, CppExtension,
+-                                               CUDAExtension)
+-    return BuildExtension, CppExtension, CUDAExtension
++        from torch_musa.utils.musa_extension import (BuildExtension, MUSAExtension)
++        from torch.utils.cpp_extension import CppExtension
++    return BuildExtension, CppExtension, MUSAExtension
+ 
+ 
+ def _get_pool():
+@@ -98,7 +98,7 @@ def _get_norm():
+ 
+ _ConvNd, _ConvTransposeMixin = _get_conv()
+ DataLoader, PoolDataLoader = _get_dataloader()
+-BuildExtension, CppExtension, CUDAExtension = _get_extension()
++BuildExtension, CppExtension, MUSAExtension = _get_extension()
+ _BatchNorm, _InstanceNorm, SyncBatchNorm_ = _get_norm()
+ _AdaptiveAvgPoolNd, _AdaptiveMaxPoolNd, _AvgPoolNd, _MaxPoolNd = _get_pool()
+ 
+diff --git a/setup.py b/setup.py
+index 8d836534..fa7b91dc 100644
+--- a/setup.py
++++ b/setup.py
+@@ -16,6 +16,10 @@ try:
+             os.getenv('FORCE_MLU', '0') == '1':
+         from torch_mlu.utils.cpp_extension import BuildExtension
+         EXT_TYPE = 'pytorch'
++    elif (hasattr(torch, 'is_musa_available') and torch.is_musa_available()) \
++            or os.getenv('FORCE_MUSA', '0') == '1':
++        from torch_musa.utils.musa_extension import BuildExtension
++        EXT_TYPE = 'pytorch'
+     else:
+         from torch.utils.cpp_extension import BuildExtension
+         EXT_TYPE = 'pytorch'
+@@ -197,7 +201,7 @@ def get_extensions():
+             libraries=libraries)
+         extensions.append(ext_ops)
+ 
+-    if os.getenv('MMCV_WITH_OPS', '0') == '0':
++    if os.getenv('MMCV_WITH_OPS', '1') == '0':
+         return extensions
+ 
+     if EXT_TYPE == 'parrots':
+@@ -265,7 +269,7 @@ def get_extensions():
+         # to compile those cpp files, so there is no need to add the
+         # argument
+         if platform.system() != 'Windows':
+-            extra_compile_args['cxx'] = ['-std=c++14']
++            extra_compile_args['cxx'] = ['-std=c++17']
+ 
+         include_dirs = []
+ 
+@@ -305,6 +309,22 @@ def get_extensions():
+             extension = MLUExtension
+             include_dirs.append(os.path.abspath('./mmcv/ops/csrc/common'))
+             include_dirs.append(os.path.abspath('./mmcv/ops/csrc/common/mlu'))
++        elif hasattr(torch, 'musa') or os.getenv('FORCE_MUSA', '0') == '1':
++            print(f'Compiling {ext_name} with MUSA & torch_musa')
++            from torch_musa.testing import get_musa_arch
++            from torch_musa.utils.musa_extension import MUSAExtension
++            define_macros += [('MMCV_WITH_MUSA', None),
++                              ('MUSA_ARCH', str(get_musa_arch()))]
++            print(f"MUSA_ARCH: {get_musa_arch()}")
++            os.environ['MUSA_ARCH'] = str(get_musa_arch())
++            op_files = glob.glob('./mmcv/ops/csrc_musa/pytorch/*.cpp') + \
++                glob.glob('./mmcv/ops/csrc_musa/pytorch/cpu/*.cpp') + \
++                glob.glob('./mmcv/ops/csrc_musa/pytorch/cuda/*.mu') + \
++                glob.glob('./mmcv/ops/csrc_musa/pytorch/cuda/*.cpp')
++            include_dirs.append(os.path.abspath('./mmcv/ops/csrc_musa/pytorch'))
++            include_dirs.append(os.path.abspath('./mmcv/ops/csrc_musa/common'))
++            include_dirs.append(os.path.abspath('./mmcv/ops/csrc_musa/common/cuda'))
++            extension = MUSAExtension
+         else:
+             print(f'Compiling {ext_name} only with CPU')
+             op_files = glob.glob('./mmcv/ops/csrc/pytorch/*.cpp') + \
+@@ -390,7 +410,7 @@ def get_extensions():
+ 
+ 
+ setup(
+-    name='mmcv' if os.getenv('MMCV_WITH_OPS', '0') == '0' else 'mmcv-full',
++    name='mmcv' if os.getenv('MMCV_WITH_OPS', '1') == '0' else 'mmcv-full',
+     version=get_version(),
+     description='OpenMMLab Computer Vision Foundation',
+     keywords='computer vision',
