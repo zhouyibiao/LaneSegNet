@@ -5,7 +5,7 @@
 # ---------------------------------------------
 
 import torch
-from torch.cuda.amp import custom_bwd, custom_fwd
+from torch_musa.core.amp import custom_bwd, custom_fwd
 from torch.autograd.function import Function, once_differentiable
 from mmcv.utils import ext_loader
 ext_module = ext_loader.load_ext(

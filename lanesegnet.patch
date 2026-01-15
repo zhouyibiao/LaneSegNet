@@ -1,0 +1,219 @@
+diff --git a/projects/bevformer/modules/decoder.py b/projects/bevformer/modules/decoder.py
+index 33024f8..e722044 100644
+--- a/projects/bevformer/modules/decoder.py
++++ b/projects/bevformer/modules/decoder.py
+@@ -178,7 +178,7 @@ class CustomMSDeformableAttention(BaseModule):
+         self.fp16_enabled = False
+ 
+         # you'd better set dim_per_head to a power of 2
+-        # which is more efficient in the CUDA implementation
++        # which is more efficient in the MUSA implementation
+         def _is_power_of_2(n):
+             if (not isinstance(n, int)) or (n < 0):
+                 raise ValueError(
+@@ -191,7 +191,7 @@ class CustomMSDeformableAttention(BaseModule):
+                 "You'd better set embed_dims in "
+                 'MultiScaleDeformAttention to make '
+                 'the dimension of each attention head a power of 2 '
+-                'which is more efficient in our CUDA implementation.')
++                'which is more efficient in our MUSA implementation.')
+ 
+         self.im2col_step = im2col_step
+         self.embed_dims = embed_dims
+@@ -322,7 +322,7 @@ class CustomMSDeformableAttention(BaseModule):
+             raise ValueError(
+                 f'Last dim of reference_points must be'
+                 f' 2 or 4, but get {reference_points.shape[-1]} instead.')
+-        if torch.cuda.is_available() and value.is_cuda:
++        if torch.musa.is_available() and value.is_musa:
+ 
+             # using fp16 deformable attention is unstable because it performs many sum operations
+             if value.dtype == torch.float16:
+diff --git a/projects/bevformer/modules/encoder.py b/projects/bevformer/modules/encoder.py
+index f816a24..4a8a08f 100644
+--- a/projects/bevformer/modules/encoder.py
++++ b/projects/bevformer/modules/encoder.py
+@@ -46,7 +46,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
+         self.fp16_enabled = False
+ 
+     @staticmethod
+-    def get_reference_points(H, W, Z=8, num_points_in_pillar=4, dim='3d', bs=1, device='cuda', dtype=torch.float):
++    def get_reference_points(H, W, Z=8, num_points_in_pillar=4, dim='3d', bs=1, device='musa', dtype=torch.float):
+         """Get the reference points used in SCA and TSA.
+         Args:
+             H, W: spatial shape of bev.
+diff --git a/projects/bevformer/modules/multi_scale_deformable_attn_function.py b/projects/bevformer/modules/multi_scale_deformable_attn_function.py
+index 77b0f31..c2017ae 100644
+--- a/projects/bevformer/modules/multi_scale_deformable_attn_function.py
++++ b/projects/bevformer/modules/multi_scale_deformable_attn_function.py
+@@ -5,7 +5,7 @@
+ # ---------------------------------------------
+ 
+ import torch
+-from torch.cuda.amp import custom_bwd, custom_fwd
++from torch_musa.core.amp import custom_bwd, custom_fwd
+ from torch.autograd.function import Function, once_differentiable
+ from mmcv.utils import ext_loader
+ ext_module = ext_loader.load_ext(
+diff --git a/projects/bevformer/modules/spatial_cross_attention.py b/projects/bevformer/modules/spatial_cross_attention.py
+index 77dfa91..46b7369 100644
+--- a/projects/bevformer/modules/spatial_cross_attention.py
++++ b/projects/bevformer/modules/spatial_cross_attention.py
+@@ -221,7 +221,7 @@ class MSDeformableAttention3D(BaseModule):
+         self.fp16_enabled = False
+ 
+         # you'd better set dim_per_head to a power of 2
+-        # which is more efficient in the CUDA implementation
++        # which is more efficient in the MUSA implementation
+         def _is_power_of_2(n):
+             if (not isinstance(n, int)) or (n < 0):
+                 raise ValueError(
+@@ -234,7 +234,7 @@ class MSDeformableAttention3D(BaseModule):
+                 "You'd better set embed_dims in "
+                 'MultiScaleDeformAttention to make '
+                 'the dimension of each attention head a power of 2 '
+-                'which is more efficient in our CUDA implementation.')
++                'which is more efficient in our MUSA implementation.')
+ 
+         self.im2col_step = im2col_step
+         self.embed_dims = embed_dims
+@@ -381,7 +381,7 @@ class MSDeformableAttention3D(BaseModule):
+         #  attention_weights.shape: bs, num_query, num_heads, num_levels, num_all_points
+         #
+ 
+-        if torch.cuda.is_available() and value.is_cuda:
++        if torch.musa.is_available() and value.is_musa:
+             if value.dtype == torch.float16:
+                 MultiScaleDeformableAttnFunction = MultiScaleDeformableAttnFunction_fp32
+             else:
+diff --git a/projects/bevformer/modules/temporal_self_attention.py b/projects/bevformer/modules/temporal_self_attention.py
+index b52a9aa..a99da05 100644
+--- a/projects/bevformer/modules/temporal_self_attention.py
++++ b/projects/bevformer/modules/temporal_self_attention.py
+@@ -74,7 +74,7 @@ class TemporalSelfAttention(BaseModule):
+         self.fp16_enabled = False
+ 
+         # you'd better set dim_per_head to a power of 2
+-        # which is more efficient in the CUDA implementation
++        # which is more efficient in the MUSA implementation
+         def _is_power_of_2(n):
+             if (not isinstance(n, int)) or (n < 0):
+                 raise ValueError(
+@@ -87,7 +87,7 @@ class TemporalSelfAttention(BaseModule):
+                 "You'd better set embed_dims in "
+                 'MultiScaleDeformAttention to make '
+                 'the dimension of each attention head a power of 2 '
+-                'which is more efficient in our CUDA implementation.')
++                'which is more efficient in our MUSA implementation.')
+ 
+         self.im2col_step = im2col_step
+         self.embed_dims = embed_dims
+@@ -236,7 +236,7 @@ class TemporalSelfAttention(BaseModule):
+             raise ValueError(
+                 f'Last dim of reference_points must be'
+                 f' 2 or 4, but get {reference_points.shape[-1]} instead.')
+-        if torch.cuda.is_available() and value.is_cuda:
++        if torch.musa.is_available() and value.is_musa:
+ 
+             # using fp16 deformable attention is unstable because it performs many sum operations
+             if value.dtype == torch.float16:
+diff --git a/projects/configs/lanesegnet_r50_8x1_24e_olv2_subset_A.py b/projects/configs/lanesegnet_r50_8x1_24e_olv2_subset_A.py
+index 9900f37..b8f58f0 100644
+--- a/projects/configs/lanesegnet_r50_8x1_24e_olv2_subset_A.py
++++ b/projects/configs/lanesegnet_r50_8x1_24e_olv2_subset_A.py
+@@ -286,15 +286,15 @@ evaluation = dict(interval=24, pipeline=test_pipeline)
+ 
+ runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
+ log_config = dict(
+-    interval=50,
++    interval=1,
+     hooks=[
+         dict(type='TextLoggerHook'),
+         dict(type='TensorboardLoggerHook')
+     ])
+ 
+-checkpoint_config = dict(interval=1, max_keep_ckpts=1)
++checkpoint_config = None
+ 
+-dist_params = dict(backend='nccl')
++dist_params = dict(backend='mccl')
+ log_level = 'INFO'
+ work_dir = None
+ load_from = None
+diff --git a/projects/configs/lanesegnet_r50_8x1_24e_olv2_subset_A_mapele_bucket.py b/projects/configs/lanesegnet_r50_8x1_24e_olv2_subset_A_mapele_bucket.py
+index 0c95728..b38bf12 100644
+--- a/projects/configs/lanesegnet_r50_8x1_24e_olv2_subset_A_mapele_bucket.py
++++ b/projects/configs/lanesegnet_r50_8x1_24e_olv2_subset_A_mapele_bucket.py
+@@ -437,7 +437,7 @@ log_config = dict(
+ 
+ checkpoint_config = dict(interval=1, max_keep_ckpts=1)
+ 
+-dist_params = dict(backend='nccl')
++dist_params = dict(backend='mccl')
+ log_level = 'INFO'
+ work_dir = None
+ load_from = None
+diff --git a/projects/lanesegnet/models/modules/lane_attention.py b/projects/lanesegnet/models/modules/lane_attention.py
+index 0996561..e8f4ca3 100644
+--- a/projects/lanesegnet/models/modules/lane_attention.py
++++ b/projects/lanesegnet/models/modules/lane_attention.py
+@@ -42,7 +42,7 @@ class LaneAttention(BaseModule):
+         self.fp16_enabled = False
+ 
+         # you'd better set dim_per_head to a power of 2
+-        # which is more efficient in the CUDA implementation
++        # which is more efficient in the MUSA implementation
+         def _is_power_of_2(n):
+             if (not isinstance(n, int)) or (n < 0):
+                 raise ValueError(
+@@ -55,7 +55,7 @@ class LaneAttention(BaseModule):
+                 "You'd better set embed_dims in "
+                 'MultiScaleDeformAttention to make '
+                 'the dimension of each attention head a power of 2 '
+-                'which is more efficient in our CUDA implementation.')
++                'which is more efficient in our MUSA implementation.')
+ 
+         self.im2col_step = im2col_step
+         self.embed_dims = embed_dims
+@@ -144,7 +144,7 @@ class LaneAttention(BaseModule):
+             raise ValueError(
+                 f'Last dim of reference_points must be'
+                 f' 2, but get {reference_points.shape[-1]} instead.')
+-        if torch.cuda.is_available() and value.is_cuda:
++        if torch.musa.is_available() and value.is_musa:
+ 
+             # using fp16 deformable attention is unstable because it performs many sum operations
+             if value.dtype == torch.float16:
+diff --git a/tools/test.py b/tools/test.py
+index e7a398f..ea65273 100755
+--- a/tools/test.py
++++ b/tools/test.py
+@@ -211,8 +211,8 @@ def main():
+             outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
+         else:
+             model = MMDistributedDataParallel(
+-                model.cuda(),
+-                device_ids=[torch.cuda.current_device()],
++                model.musa(),
++                device_ids=[torch.musa.current_device()],
+                 broadcast_buffers=False)
+             outputs = multi_gpu_test(model, data_loader, 
+                                      tmpdir=os.path.join(args.out_dir, '.dist_test'), 
+diff --git a/tools/train.py b/tools/train.py
+index 18684fb..41f0427 100755
+--- a/tools/train.py
++++ b/tools/train.py
+@@ -25,6 +25,13 @@ from mmdet3d.models import build_model
+ from mmdet3d.utils import collect_env, get_root_logger
+ from mmdet.apis import set_random_seed
+ from mmseg import __version__ as mmseg_version
++from mmcv.runner import (get_dist_info, init_dist, load_checkpoint, wrap_fp16_model)
++import sys
++tools_dir = os.path.dirname(os.path.abspath(__file__))
++LaneSegNet_dir = os.path.dirname(tools_dir)
++sys.path.append(tools_dir)
++sys.path.append(LaneSegNet_dir)
++import projects
+ 
+ try:
+     # If mmdet version > 2.20.0, setup_multi_processes would be imported and

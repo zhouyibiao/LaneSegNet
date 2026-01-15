@@ -437,7 +437,7 @@ log_config = dict(
 
 checkpoint_config = dict(interval=1, max_keep_ckpts=1)
 
-dist_params = dict(backend='nccl')
+dist_params = dict(backend='mccl')
 log_level = 'INFO'
 work_dir = None
 load_from = None

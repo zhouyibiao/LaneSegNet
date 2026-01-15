@@ -178,7 +178,7 @@ class CustomMSDeformableAttention(BaseModule):
         self.fp16_enabled = False
 
         # you'd better set dim_per_head to a power of 2
-        # which is more efficient in the CUDA implementation
+        # which is more efficient in the MUSA implementation
         def _is_power_of_2(n):
             if (not isinstance(n, int)) or (n < 0):
                 raise ValueError(
@@ -191,7 +191,7 @@ class CustomMSDeformableAttention(BaseModule):
                 "You'd better set embed_dims in "
                 'MultiScaleDeformAttention to make '
                 'the dimension of each attention head a power of 2 '
-                'which is more efficient in our CUDA implementation.')
+                'which is more efficient in our MUSA implementation.')
 
         self.im2col_step = im2col_step
         self.embed_dims = embed_dims
@@ -322,7 +322,7 @@ class CustomMSDeformableAttention(BaseModule):
             raise ValueError(
                 f'Last dim of reference_points must be'
                 f' 2 or 4, but get {reference_points.shape[-1]} instead.')
-        if torch.cuda.is_available() and value.is_cuda:
+        if torch.musa.is_available() and value.is_musa:
 
             # using fp16 deformable attention is unstable because it performs many sum operations
             if value.dtype == torch.float16:

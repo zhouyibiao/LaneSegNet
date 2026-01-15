@@ -33,6 +33,76 @@ sys.path.append(tools_dir)
 sys.path.append(LaneSegNet_dir)
 import projects
 
+
+import pickle
+from collections import defaultdict
+# enable tensor core
+torch.backends.mudnn.allow_tf32 = True
+
+def process_tensor(x):
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu()
+    elif isinstance(x, (list, tuple)):
+        return [process_tensor(item) for item in x]
+    else:
+        return x
+    
+def get_activation_and_weights_hook(layer_name, save_dir="activations"):
+    
+    os.makedirs(save_dir, exist_ok=True)
+    
+    def hook(module, input, output):
+        processed_output = process_tensor(output)
+        save_path = os.path.join(save_dir, f"{layer_name}.out.pkl")
+        with open(save_path, "wb") as f:
+            pickle.dump(processed_output, f)
+        print(f"已保存 {layer_name} 的激活值")
+        # print(f"zyb debug: {layer_name}.training: {module.training}")
+        return 
+        
+        # 保存 module 
+        hook_id = None
+        for id, h in module._forward_hooks.items():
+            if h == hook:  # 找到当前hook
+                hook_id = id
+                break
+        if hook_id is not None:
+            del module._forward_hooks[hook_id]  # 移除引用，避免pickle序列化
+        # print(f"zyb debug: {layer_name}.training: {module.training}")
+        
+        # 保存路径：{layer_name}.module.pth
+        save_path = os.path.join(save_dir, f"{layer_name}.module.pth")
+        
+        # 直接保存整个模块
+        torch.save(module.cpu(), save_path)
+        print(f"已保存整个 {layer_name} 模块权重")
+        
+        printBatchNorm2d= True
+        if printBatchNorm2d:
+            restored_layer_train_gpu = module
+            import torch.nn as nn
+            if isinstance(restored_layer_train_gpu, nn.BatchNorm2d):
+                print("\n===== BN2d 完整参数与状态 =====")
+                # 可学习参数
+                if hasattr(restored_layer_train_gpu, 'weight'):
+                    print(f"weight（缩放系数）: {restored_layer_train_gpu.weight.shape}, 设备: {restored_layer_train_gpu.weight.device}")
+                if hasattr(restored_layer_train_gpu, 'bias') and restored_layer_train_gpu.bias is not None:
+                    print(f"bias（偏移系数）: {restored_layer_train_gpu.bias.shape}, 设备: {restored_layer_train_gpu.bias.device}")
+                
+                # 缓冲区（训练统计信息）
+                if hasattr(restored_layer_train_gpu, 'running_mean'):
+                    print(f"running_mean（移动平均均值）: {restored_layer_train_gpu.running_mean.shape}, 设备: {restored_layer_train_gpu.running_mean.device}")
+                if hasattr(restored_layer_train_gpu, 'running_var'):
+                    print(f"running_var（移动平均方差）: {restored_layer_train_gpu.running_var.shape}, 设备: {restored_layer_train_gpu.running_var.device}")
+                if hasattr(restored_layer_train_gpu, 'num_batches_tracked'):
+                    print(f"num_batches_tracked（跟踪批次数）: {restored_layer_train_gpu.num_batches_tracked.item()}")  #  scalar
+                
+                # 训练状态
+                print(f"training（是否训练模式）: {restored_layer_train_gpu.training}")
+    
+    return hook
+
+
 try:
     # If mmdet version > 2.20.0, setup_multi_processes would be imported and
     # used from mmdet instead of mmdet3d.
@@ -278,8 +348,24 @@ def main():
         train_cfg=cfg.get('train_cfg'),
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
-
-    logger.info(f'Model:\n{model}')
+    
+    # if torch.cuda.is_available():
+    #     checkpoint_path = "/data/yibiao.zhou/LaneSegNet/LaneSegNet/tools/lanesegnet_r50_8x1_24e_olv2_subset_A.pth"
+    #     print(f"zyb debug: 使用 CUDA 设备，loading pretrained weights from {checkpoint_path}")
+    # elif hasattr(torch, 'musa') and torch.musa.is_available():
+    #     checkpoint_path = "/data/yibiao.zhou/LaneSegNet-Adaption/LaneSegNet/tools/lanesegnet_r50_8x1_24e_olv2_subset_A.pth"
+    #     print(f"zyb debug: 使用 MUSA 设备，loading pretrained weights from {checkpoint_path}")
+    # else:
+    #     print("zyb debug: 需要 CUDA 或 MUSA 设备")
+    #     exit(-1) 
+    
+    
+    # checkpoint = load_checkpoint(model, checkpoint_path , map_location='cpu')
+    # print(f"zyb debug: loaded pretrained weights from {checkpoint_path}")
+    # model.train()
+    # print(f"after .train(), model.training: {model.training}")
+    # logger.info(f'Model:\n{model}')
+    
     datasets = [build_dataset(cfg.data.train)]
     if len(cfg.workflow) == 2:
         val_dataset = copy.deepcopy(cfg.data.val)
@@ -307,6 +393,129 @@ def main():
     # add an attribute for visualization convenience
     model.CLASSES = datasets[0].CLASSES
     auto_scale_lr(cfg, distributed=distributed, logger=logger)
+    
+    # print("zyb debug: print model named_modules")
+    # for name, module in model.named_modules():
+    #     print(name)  # 输出类似：backbone.blocks.0.conv、neck.fpn_convs.0.conv等
+    #     print(type(module))
+    # print("zyb debug: print model named_modules")
+    # return
+     
+    target_layers_activations = [  # 要监控的中间层（根据模型结构修改）
+        "img_backbone.conv1",
+        "img_backbone.bn1",
+        "img_backbone.relu",
+        "img_backbone.maxpool",        
+        # img_backbone.layer1.0
+        "img_backbone.layer1.0.conv1",
+        "img_backbone.layer1.0.bn1",
+        "img_backbone.layer1.0.conv3",
+        "img_backbone.layer1.0.bn3",
+        "img_backbone.layer1.0.relu",
+        # img_backbone.layer1.1
+        "img_backbone.layer1.1.conv1",
+        "img_backbone.layer1.1.bn1",
+        "img_backbone.layer1.1.conv3",
+        "img_backbone.layer1.1.bn3",
+        "img_backbone.layer1.1.relu",
+        # output of img_backbone
+        "img_backbone.layer4.2.conv3",
+        "img_backbone.layer4.2.bn3",
+        "img_backbone.layer4.2.relu",
+        # img_neck
+        "img_neck.lateral_convs.0.conv",
+        "img_neck.lateral_convs.1.conv",
+        "img_neck.fpn_convs.0.conv",
+        # last 2 layer of bev_constructor
+        "bev_constructor.can_bus_mlp.3",
+        "bev_constructor.can_bus_mlp.norm",
+        # pts_bbox_head
+        "pts_bbox_head.loss_cls",
+        "pts_bbox_head.loss_bbox",
+        "pts_bbox_head.loss_lane_type",
+        "pts_bbox_head.loss_mask",
+        "pts_bbox_head.loss_dice",
+        "pts_bbox_head.activate",
+    ]
+    
+    target_layers_weight = [  # 要监控的中间层（根据模型结构修改）
+        # "img_backbone.conv1",
+        # "img_backbone.bn1",
+        # "img_backbone.relu",
+        # "img_backbone.maxpool",        
+        # # img_backbone.layer1.0
+        # "img_backbone.layer1.0.conv1",
+        # "img_backbone.layer1.0.bn1",
+        # "img_backbone.layer1.0.conv3",
+        # "img_backbone.layer1.0.bn3",
+        # "img_backbone.layer1.0.relu",
+        # # img_backbone.layer1.1
+        # "img_backbone.layer1.1.conv1",
+        # "img_backbone.layer1.1.bn1",
+        # "img_backbone.layer1.1.conv3",
+        # "img_backbone.layer1.1.bn3",
+        # "img_backbone.layer1.1.relu",
+        # output of img_backbone
+        "img_backbone.layer4.2.conv3",
+        "img_backbone.layer4.2.bn3",
+        "img_backbone.layer4.2.relu",
+        # # img_neck
+        # "img_neck.lateral_convs.0.conv",
+        # "img_neck.lateral_convs.1.conv",
+        # "img_neck.fpn_convs.0.conv",
+        # # last 2 layer of bev_constructor
+        # "bev_constructor.can_bus_mlp.3",
+        # "bev_constructor.can_bus_mlp.norm",
+        # # pts_bbox_head
+        # "pts_bbox_head.loss_cls",
+        # "pts_bbox_head.loss_bbox",
+        # "pts_bbox_head.loss_lane_type",
+        # "pts_bbox_head.loss_mask",
+        # "pts_bbox_head.loss_dice",
+        # "pts_bbox_head.activate",
+    ]
+    
+    target_layers = list(set(target_layers_weight))
+    target_layers = list(set(target_layers_activations))
+    
+    if torch.cuda.is_available():
+        activation_saving_dir = "/data/yibiao.zhou/LaneSegNet/debuging_files/nv_activations"
+        print(f"zyb debug: 使用 CUDA 设备，中间变量保存到{activation_saving_dir}")
+    elif hasattr(torch, 'musa') and torch.musa.is_available():
+        activation_saving_dir = "/data/yibiao.zhou/LaneSegNet-Adaption/LaneSegNet/debug_files/forward_loss/mt_activations"
+        print(f"zyb debug: 使用 MUSA 设备，中间变量保存到{activation_saving_dir}")
+    else:
+        print("zyb debug: 需要 CUDA 或 MUSA 设备来保存中间变量，当前没有可用设备，程序退出")
+        exit(-1) 
+                    
+    # hooks = []
+    # for layer_name in target_layers:
+    #     # 获取目标模块
+    #     module = dict(model.named_modules())[layer_name]
+    #     # 注册钩子（指定层名和保存目录）
+    #     hook = module.register_forward_hook(get_activation_and_weights_hook(layer_name, save_dir=activation_saving_dir))
+    #     hooks.append(hook)
+    
+    print(f"before train_model, model.training: {model.training}")
+    channel_last = __import__('os').getenv('CHANNEL_LAST', '0') == '1'
+    if channel_last:
+        for m in model.modules():
+            if isinstance(m, (torch.nn.Conv2d, torch.nn.BatchNorm2d)):
+                m = m.to(memory_format=torch.channels_last)
+        print(f'zyb debug: set to channel last')
+    
+    from torch_musa.utils.compare_tool import NanInfTracker, CompareWithCPU
+    # with NanInfTracker(enabled=True, 
+    #                    should_log_to_file=True, 
+    #                    output_dir="/data/yibiao.zhou/LaneSegNet-Adaption/Debug_Files/debug_files/nan_inf_logs_2026/",
+    #                    target_list=["torch.ops.aten.native_batch_norm", "torch.ops.aten.native_batch_norm_backward"],
+    #                    ):
+    # with CompareWithCPU(enabled=False, 
+    #                    should_log_to_file=True, 
+    #                    dump_error_data = True,
+    #                    output_dir="/data/yibiao.zhou/LaneSegNet-Adaption/Debug_Files/debug_files/nan_inf_logs_2026/",
+    #                    target_list=["torch.ops.aten.native_batch_norm", "torch.ops.aten.native_batch_norm_backward"],
+    #                    ):
     train_model(
         model,
         datasets,
